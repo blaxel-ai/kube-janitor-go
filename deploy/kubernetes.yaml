@@ -1,0 +1,156 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-janitor
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-janitor-go
+  namespace: kube-janitor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-janitor-go
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["list", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-janitor-go
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-janitor-go
+subjects:
+  - kind: ServiceAccount
+    name: kube-janitor-go
+    namespace: kube-janitor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-janitor-go-rules
+  namespace: kube-janitor
+data:
+  rules.yaml: |
+    rules:
+      # Delete deployments without app label after 7 days
+      - id: require-app-label
+        resources:
+          - deployments
+          - statefulsets
+        expression: "!has(object.spec.template.metadata.labels.app)"
+        ttl: 7d
+      
+      # Delete PR deployments after 4 hours
+      - id: temporary-pr-deployments
+        resources:
+          - deployments
+        expression: 'object.metadata.name.startsWith("pr-")'
+        ttl: 4h
+      
+      # Clean up completed jobs after 1 day
+      - id: cleanup-completed-jobs
+        resources:
+          - jobs
+        expression: 'has(object.status.succeeded) && object.status.succeeded > 0'
+        ttl: 24h
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-janitor-go
+  namespace: kube-janitor
+  labels:
+    app: kube-janitor-go
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-janitor-go
+  template:
+    metadata:
+      labels:
+        app: kube-janitor-go
+    spec:
+      serviceAccountName: kube-janitor-go
+      containers:
+      - name: kube-janitor-go
+        image: ghcr.io/yourusername/kube-janitor-go:latest
+        args:
+          - --interval=60s
+          - --exclude-namespaces=kube-system,kube-public,kube-node-lease,kube-janitor
+          - --rules-file=/config/rules.yaml
+          - --log-level=info
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: rules
+          mountPath: /config
+          readOnly: true
+      volumes:
+      - name: rules
+        configMap:
+          name: kube-janitor-go-rules
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-janitor-go
+  namespace: kube-janitor
+  labels:
+    app: kube-janitor-go
+spec:
+  selector:
+    app: kube-janitor-go
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+    protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-janitor-go
+  namespace: kube-janitor
+  labels:
+    app: kube-janitor-go
+spec:
+  selector:
+    matchLabels:
+      app: kube-janitor-go
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics 

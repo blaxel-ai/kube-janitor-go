@@ -1,0 +1,72 @@
+rules:
+  # Delete deployments without app label after 7 days
+  - id: require-app-label
+    resources:
+      - deployments
+      - statefulsets
+    expression: "!has(object.spec.template.metadata.labels.app)"
+    ttl: 7d
+
+  # Delete PR deployments after 4 hours
+  - id: temporary-pr-deployments
+    resources:
+      - deployments
+    expression: 'object.metadata.name.startsWith("pr-")'
+    ttl: 4h
+
+  # Clean up resources in temp namespaces
+  - id: temp-namespace-cleanup
+    resources:
+      - "*"
+    expression: 'object.metadata.namespace == "temp"'
+    ttl: 3d
+
+  # Delete unbound PVCs after 7 days
+  - id: cleanup-unbound-pvcs
+    resources:
+      - persistentvolumeclaims
+    expression: 'object.status.phase == "Pending"'
+    ttl: 7d
+
+  # Clean up completed jobs after 1 day
+  - id: cleanup-completed-jobs
+    resources:
+      - jobs
+    expression: 'has(object.status.succeeded) && object.status.succeeded > 0'
+    ttl: 24h
+
+  # Clean up failed jobs after 3 days
+  - id: cleanup-failed-jobs
+    resources:
+      - jobs
+    expression: 'has(object.status.failed) && object.status.failed > 0'
+    ttl: 3d
+
+  # Delete pods in Error or Completed state after 6 hours
+  - id: cleanup-terminated-pods
+    resources:
+      - pods
+    expression: 'object.status.phase in ["Failed", "Succeeded"]'
+    ttl: 6h
+
+  # Delete services without selector after 30 days
+  - id: cleanup-orphaned-services
+    resources:
+      - services
+    expression: '!has(object.spec.selector) || size(object.spec.selector) == 0'
+    ttl: 30d
+
+  # Clean up ConfigMaps and Secrets not referenced by any pod
+  # Note: This is a simplified example - in production you'd need more sophisticated checks
+  - id: cleanup-unused-configmaps
+    resources:
+      - configmaps
+    expression: '!object.metadata.name.endsWith("-config") && object.metadata.creationTimestamp < timestamp("2024-01-01T00:00:00Z")'
+    ttl: 14d
+
+  # Delete resources with specific cleanup label
+  - id: labeled-for-cleanup
+    resources:
+      - "*"
+    expression: 'has(object.metadata.labels.cleanup) && object.metadata.labels.cleanup == "true"'
+    ttl: 1h 

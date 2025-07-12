@@ -1,0 +1,112 @@
+# Example resources demonstrating kube-janitor-go usage
+
+---
+# Example 1: Pod with TTL annotation - will be deleted after 2 hours
+apiVersion: v1
+kind: Pod
+metadata:
+  name: temp-debug-pod
+  namespace: default
+  annotations:
+    janitor/ttl: "2h"
+spec:
+  containers:
+  - name: debug
+    image: busybox:latest
+    command: ["sleep", "3600"]
+
+---
+# Example 2: Deployment with expiration date
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feature-branch-123
+  namespace: default
+  annotations:
+    janitor/expires: "2024-12-31T23:59:59Z"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feature-test
+  template:
+    metadata:
+      labels:
+        app: feature-test
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+
+---
+# Example 3: ConfigMap that will be cleaned up by rules
+# (if using the rule that requires 'app' label)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orphaned-config
+  namespace: default
+  # Note: No 'app' label, so it matches the cleanup rule
+data:
+  config.yaml: |
+    setting: value
+
+---
+# Example 4: Job that will be cleaned up after completion
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-migration-job
+  namespace: default
+  annotations:
+    janitor/ttl: "24h"
+spec:
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: busybox
+        command: ["sh", "-c", "echo 'Migration complete' && sleep 10"]
+      restartPolicy: Never
+  backoffLimit: 4
+
+---
+# Example 5: Service marked for quick cleanup with label
+apiVersion: v1
+kind: Service
+metadata:
+  name: temp-service
+  namespace: default
+  labels:
+    cleanup: "true"  # Matches the 'labeled-for-cleanup' rule
+spec:
+  selector:
+    app: temp-app
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# Example 6: PersistentVolumeClaim that will be cleaned if unbound
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: unused-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# Example 7: Namespace with short-form expiration date
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: temp-testing
+  annotations:
+    janitor/expires: "2024-12-25"  # Expires at midnight UTC on Christmas 
