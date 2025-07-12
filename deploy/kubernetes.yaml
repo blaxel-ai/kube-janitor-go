@@ -85,7 +85,8 @@ spec:
       serviceAccountName: kube-janitor-go
       containers:
       - name: kube-janitor-go
-        image: ghcr.io/yourusername/kube-janitor-go:latest
+        image: ghcr.io/blaxel-ai/kube-janitor-go:latest
+        imagePullPolicy: Always
         args:
           - --interval=60s
           - --exclude-namespaces=kube-system,kube-public,kube-node-lease,kube-janitor

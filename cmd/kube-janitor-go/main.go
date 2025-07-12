@@ -73,7 +73,7 @@ func initConfig() {
 	})
 }
 
-func run(cmd *cobra.Command, args []string) error {
+func run(_ *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

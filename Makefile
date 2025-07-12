@@ -2,7 +2,7 @@
 
 # Variables
 BINARY_NAME := kube-janitor-go
-DOCKER_IMAGE := ghcr.io/yourusername/kube-janitor-go
+DOCKER_IMAGE := ghcr.io/blaxel-ai/kube-janitor-go
 VERSION := $(shell git describe --tags --always --dirty)
 GOFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(shell git rev-parse HEAD) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -23,7 +23,7 @@ test:
 ## lint: Run linters
 lint:
 	@echo "Running linters..."
-	golangci-lint run ./...
+	golangci-lint run --timeout=5m ./...
 
 ## fmt: Format code
 fmt:

@@ -19,7 +19,7 @@ jobs:
           check-latest: true
 
       - name: Install golangci-lint
-        run: make install-lint
+        run: make install-tools
 
       - name: Run tests
         run: make test
