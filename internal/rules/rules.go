@@ -20,8 +20,8 @@ type Rule struct {
 	TTL        string   `yaml:"ttl"`
 }
 
-// RulesFile represents the structure of the rules YAML file
-type RulesFile struct {
+// File represents a collection of rules from a YAML file
+type File struct {
 	Rules []Rule `yaml:"rules"`
 }
 
@@ -45,7 +45,7 @@ func LoadFromFile(path string) (*Engine, error) {
 		return nil, fmt.Errorf("failed to read rules file: %w", err)
 	}
 
-	var rulesFile RulesFile
+	var rulesFile File
 	if err := yaml.Unmarshal(data, &rulesFile); err != nil {
 		return nil, fmt.Errorf("failed to parse rules file: %w", err)
 	}

@@ -37,13 +37,13 @@ func TestServerStart(t *testing.T) {
 	go func() {
 		// Create a test server with a custom handler
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte("# HELP test_metric Test metric\n")); err != nil {
 				t.Logf("Failed to write metrics response: %v", err)
 			}
 		}))
-		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte("ok")); err != nil {
 				t.Logf("Failed to write health response: %v", err)
@@ -52,12 +52,13 @@ func TestServerStart(t *testing.T) {
 
 		// Use a test server instead of the real one for testing
 		testServer := &http.Server{
-			Addr:    ":0",
-			Handler: mux,
+			Addr:              "localhost:0",
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
 		}
 
 		// Start listening
-		listener, err := net.Listen("tcp", ":0")
+		listener, err := net.Listen("tcp", "localhost:0")
 		if err != nil {
 			errChan <- err
 			return

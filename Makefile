@@ -23,7 +23,7 @@ test:
 ## lint: Run linters
 lint:
 	@echo "Running linters..."
-	golangci-lint run ./...
+	golangci-lint run --timeout=5m ./...
 
 ## fmt: Format code
 fmt:

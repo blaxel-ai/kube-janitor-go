@@ -198,7 +198,7 @@ func TestProcessItem(t *testing.T) {
 
 	// Track delete calls
 	var deleteCalled bool
-	dynamicClient.PrependReactor("delete", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+	dynamicClient.PrependReactor("delete", "pods", func(_ ktesting.Action) (bool, runtime.Object, error) {
 		deleteCalled = true
 		return true, nil, nil
 	})
@@ -250,7 +250,7 @@ func TestProcessItemDryRun(t *testing.T) {
 
 	// Track delete calls
 	var deleteCalled bool
-	dynamicClient.PrependReactor("delete", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+	dynamicClient.PrependReactor("delete", "pods", func(_ ktesting.Action) (bool, runtime.Object, error) {
 		deleteCalled = true
 		return true, nil, nil
 	})

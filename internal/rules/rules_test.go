@@ -304,7 +304,7 @@ func TestLoadFromFile(t *testing.T) {
     expression: "object.metadata.name == 'test'"
     ttl: 30m`
 
-	err := os.WriteFile(rulesFile, []byte(rulesContent), 0644)
+	err := os.WriteFile(rulesFile, []byte(rulesContent), 0600)
 	require.NoError(t, err)
 
 	// Test loading from file
@@ -320,7 +320,7 @@ func TestLoadFromFile(t *testing.T) {
 
 	// Test invalid YAML
 	invalidFile := filepath.Join(tmpDir, "invalid.yaml")
-	err = os.WriteFile(invalidFile, []byte("invalid: yaml: content"), 0644)
+	err = os.WriteFile(invalidFile, []byte("invalid: yaml: content"), 0600)
 	require.NoError(t, err)
 
 	_, err = LoadFromFile(invalidFile)
