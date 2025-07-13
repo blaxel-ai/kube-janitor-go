@@ -62,6 +62,37 @@ install-tools:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install mvdan.cc/gofumpt@latest
 
+## helm-lint: Lint Helm chart
+helm-lint:
+	@echo "Linting Helm chart..."
+	helm lint helm/kube-janitor-go
+
+## helm-test: Test Helm chart
+helm-test:
+	@echo "Testing Helm chart..."
+	./helm/test-helm-chart.sh
+
+## helm-package: Package Helm chart
+helm-package:
+	@echo "Packaging Helm chart..."
+	helm package helm/kube-janitor-go -d helm/dist/
+	helm repo index helm/dist/ --url https://blaxel-ai.github.io/kube-janitor-go
+
+## helm-template: Template Helm chart with default values
+helm-template:
+	@echo "Templating Helm chart..."
+	helm template kube-janitor-go helm/kube-janitor-go
+
+## helm-install-dry-run: Test Helm chart installation (no cluster required)
+helm-install-dry-run:
+	@echo "Testing Helm chart installation (template mode)..."
+	helm template kube-janitor-go helm/kube-janitor-go --debug
+
+## helm-docs: Generate Helm values documentation
+helm-docs:
+	@echo "Generating Helm values documentation..."
+	@cd helm/kube-janitor-go && make docs
+
 ## help: Show this help message
 help:
 	@echo "Usage: make [target]"

@@ -5,6 +5,93 @@ on:
     types: [published]
 
 jobs:
+  helm-package:
+    name: Package and Publish Helm Chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Update Chart version
+        run: |
+          # Update Chart.yaml with the release version
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          sed -i "s/^version:.*/version: $VERSION/" helm/kube-janitor-go/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/kube-janitor-go/Chart.yaml
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Regenerate values documentation
+        run: |
+          cd helm/kube-janitor-go
+          python3 scripts/generate-values-docs.py
+
+      - name: Package Helm chart
+        run: |
+          helm package helm/kube-janitor-go -d .gh-pages
+          
+      - name: Upload chart to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .gh-pages/*.tgz
+
+      - name: Checkout gh-pages branch
+        run: |
+          # Configure git
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
+          # Fetch or create gh-pages branch
+          if git fetch origin gh-pages:gh-pages 2>/dev/null; then
+            git checkout gh-pages
+            git reset --hard origin/gh-pages
+          else
+            echo "Creating new gh-pages branch"
+            git checkout --orphan gh-pages
+            # Remove all files from the new branch
+            git rm -rf . || true
+            echo "# Helm Charts" > README.md
+            echo "" >> README.md
+            echo "This branch hosts Helm charts for kube-janitor-go." >> README.md
+            git add README.md
+            git commit -m "Initial gh-pages branch"
+          fi
+
+      - name: Update Helm repository
+        run: |
+          mkdir -p charts
+          cp .gh-pages/*.tgz charts/
+          helm repo index charts/ --url https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}
+          helm repo index . --url https://blaxel-ai.github.io/kube-janitor-go --merge charts/index.yaml
+
+      - name: Commit and push
+        run: |
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Release Helm chart ${{ github.event.release.tag_name }}"
+            git push origin gh-pages || git push --set-upstream origin gh-pages
+          fi
+
   release:
     name: Build and Push Release Image
     runs-on: ubuntu-latest

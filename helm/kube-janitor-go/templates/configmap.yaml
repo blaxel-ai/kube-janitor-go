@@ -1,0 +1,17 @@
+{{- if .Values.janitor.rulesFile.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kube-janitor-go.fullname" . }}-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-janitor-go.labels" . | nindent 4 }}
+  annotations:
+    {{- include "kube-janitor-go.annotations" . | nindent 4 }}
+data:
+  rules.yaml: |
+    rules:
+{{- with .Values.janitor.rulesFile.rules }}
+{{ toYaml . | indent 6 }}
+{{- end }}
+{{- end }} 

@@ -1,0 +1,71 @@
+# Test values for kube-janitor-go
+# This file demonstrates various configuration options
+
+# Enable dry-run mode for testing
+janitor:
+  dryRun: true
+  logLevel: debug
+  interval: 30s
+  
+  # Include only test namespaces
+  includeNamespaces:
+    - test
+    - dev
+    - staging
+  
+  # Custom rules for testing
+  rulesFile:
+    enabled: true
+    rules:
+      # Clean up test resources quickly
+      - id: cleanup-test-resources
+        resources:
+          - pods
+          - deployments
+          - services
+        expression: 'object.metadata.labels.environment == "test"'
+        ttl: 1h
+      
+      # Delete failed pods
+      - id: cleanup-failed-pods
+        resources:
+          - pods
+        expression: 'object.status.phase == "Failed"'
+        ttl: 30m
+      
+      # Clean up completed test jobs
+      - id: cleanup-test-jobs
+        resources:
+          - jobs
+        expression: 'object.metadata.name.startsWith("test-") && has(object.status.completionTime)'
+        ttl: 2h
+
+# Enable metrics with ServiceMonitor
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus-operator
+
+# Resource limits for testing
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Enable autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1 

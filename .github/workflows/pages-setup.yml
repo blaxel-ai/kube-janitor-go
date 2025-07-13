@@ -1,0 +1,66 @@
+name: Setup GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/pages-setup.yml'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create gh-pages branch if needed
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
+          # Check if gh-pages branch exists on remote
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Creating gh-pages branch"
+            git checkout --orphan gh-pages
+            git rm -rf . || true
+            echo "# Helm Charts Repository" > README.md
+            echo "" >> README.md
+            echo "This branch hosts Helm charts for kube-janitor-go." >> README.md
+            echo "" >> README.md
+            echo "## Usage" >> README.md
+            echo "" >> README.md
+            echo '```bash' >> README.md
+            echo "helm repo add kube-janitor-go https://blaxel-ai.github.io/kube-janitor-go" >> README.md
+            echo "helm repo update" >> README.md
+            echo "helm install kube-janitor-go kube-janitor-go/kube-janitor-go" >> README.md
+            echo '```' >> README.md
+            git add README.md
+            git commit -m "Initialize gh-pages branch"
+            git push --set-upstream origin gh-pages
+          else
+            echo "gh-pages branch already exists"
+          fi
+
+      - name: Enable GitHub Pages
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.repos.updateInformationAboutPagesSite({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                source: {
+                  branch: 'gh-pages',
+                  path: '/'
+                }
+              });
+              console.log('GitHub Pages enabled on gh-pages branch');
+            } catch (error) {
+              console.log('GitHub Pages might already be enabled or there was an error:', error.message);
+            } 

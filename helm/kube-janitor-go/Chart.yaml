@@ -1,0 +1,21 @@
+apiVersion: v2
+name: kube-janitor-go
+description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources after a configured TTL
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - kubernetes
+  - janitor
+  - cleanup
+  - ttl
+  - garbage-collection
+  - resource-management
+home: https://github.com/blaxel-ai/kube-janitor-go
+sources:
+  - https://github.com/blaxel-ai/kube-janitor-go
+maintainers:
+  - name: Blaxel AI
+    email: support@blaxel.ai
+    url: https://blaxel.ai
+icon: https://raw.githubusercontent.com/blaxel-ai/kube-janitor-go/main/logo.png
