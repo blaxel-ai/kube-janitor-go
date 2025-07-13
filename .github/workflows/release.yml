@@ -7,16 +7,14 @@ on:
 jobs:
   helm-package:
     name: Package and Publish Helm Chart
+    needs: [release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pages: write
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Configure Git
         run: |
@@ -24,9 +22,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: 'latest'
+        uses: azure/setup-helm@v3
 
       - name: Update Chart version
         run: |
@@ -35,6 +31,10 @@ jobs:
           VERSION="${VERSION#v}"  # Remove 'v' prefix if present
           sed -i "s/^version:.*/version: $VERSION/" helm/kube-janitor-go/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/kube-janitor-go/Chart.yaml
+          
+          # Verify the changes
+          echo "Updated Chart.yaml:"
+          grep -E "^(version|appVersion):" helm/kube-janitor-go/Chart.yaml
 
       - name: Install dependencies
         run: pip install pyyaml
@@ -46,57 +46,75 @@ jobs:
 
       - name: Package Helm chart
         run: |
-          helm package helm/kube-janitor-go -d .gh-pages
+          mkdir -p .build
+          helm package helm/kube-janitor-go -d .build
+          
+          # Verify the packaged chart
+          echo "Packaged chart contents:"
+          tar -tzf .build/*.tgz | grep Chart.yaml
+          tar -xzf .build/*.tgz -O kube-janitor-go/Chart.yaml | grep -E "^(version|appVersion):"
           
       - name: Upload chart to release
         uses: softprops/action-gh-release@v2
         with:
-          files: .gh-pages/*.tgz
+          files: .build/*.tgz
 
-      - name: Stash changes before branch switch
+      - name: Prepare gh-pages directory
         run: |
-          # Stash any uncommitted changes (like Chart.yaml modifications)
-          git add -A
-          git stash save "Chart.yaml version changes" || true
-
-      - name: Checkout gh-pages branch
-        run: |
-          # Configure git
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-          
-          # Fetch or create gh-pages branch
-          if git fetch origin gh-pages:gh-pages 2>/dev/null; then
-            git checkout gh-pages
-            git reset --hard origin/gh-pages
-          else
-            echo "Creating new gh-pages branch"
-            git checkout --orphan gh-pages
-            # Remove all files from the new branch
-            git rm -rf . || true
-            echo "# Helm Charts" > README.md
+          # Clone the repository with just the gh-pages branch if it exists
+          git clone --single-branch --branch gh-pages https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages 2>/dev/null || {
+            echo "gh-pages branch does not exist, creating it..."
+            mkdir -p gh-pages
+            cd gh-pages
+            git init
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git checkout -b gh-pages
+            echo "# Helm Repository" > README.md
             echo "" >> README.md
             echo "This branch hosts Helm charts for kube-janitor-go." >> README.md
             git add README.md
             git commit -m "Initial gh-pages branch"
-          fi
+            cd ..
+          }
 
-      - name: Update Helm repository
+      - name: Copy and Index Charts
         run: |
-          mkdir -p charts
-          cp .gh-pages/*.tgz charts/
-          helm repo index charts/ --url https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}
-          helm repo index . --url https://blaxel-ai.github.io/kube-janitor-go --merge charts/index.yaml
-
-      - name: Commit and push
-        run: |
-          git add .
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
+          cp .build/*.tgz gh-pages/
+          cd gh-pages
+          
+          # Generate index.yaml (merge with existing if present)
+          if [ -f index.yaml ]; then
+            helm repo index . --merge index.yaml --url https://blaxel-ai.github.io/kube-janitor-go
           else
-            git commit -m "Release Helm chart ${{ github.event.release.tag_name }}"
-            git push origin gh-pages || git push --set-upstream origin gh-pages
+            helm repo index . --url https://blaxel-ai.github.io/kube-janitor-go
           fi
+          
+          # Also index for direct GitHub release downloads
+          helm repo index . --merge index.yaml --url https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}
+          
+          # Verify the index contains correct version
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          echo "Index.yaml entry for release:"
+          grep -A 20 "version: ${VERSION}" index.yaml || true
+
+      - name: Commit and Push to gh-pages
+        run: |
+          cd gh-pages
+          
+          # Configure git identity
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          
+          git add .
+          git commit -m "Release Helm chart version ${{ github.event.release.tag_name }}" || echo "No changes to commit"
+          
+          # Set remote if not already set (for newly created branch)
+          git remote -v | grep origin || git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          
+          # Push to gh-pages branch
+          git push origin gh-pages --force
 
   release:
     name: Build and Push Release Image
