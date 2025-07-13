@@ -1,0 +1,56 @@
+1. kube-janitor-go has been successfully deployed!
+
+{{- if .Values.janitor.dryRun }}
+
+⚠️  WARNING: Dry-run mode is enabled. The janitor will only log what would be deleted without actually deleting resources.
+{{- end }}
+
+2. Configuration summary:
+   - Interval: {{ .Values.janitor.interval }}
+   - Log level: {{ .Values.janitor.logLevel }}
+   - Max workers: {{ .Values.janitor.maxWorkers }}
+   {{- if .Values.janitor.excludeNamespaces }}
+   - Excluded namespaces: {{ join ", " .Values.janitor.excludeNamespaces }}
+   {{- end }}
+   {{- if .Values.janitor.excludeResources }}
+   - Excluded resources: {{ join ", " .Values.janitor.excludeResources }}
+   {{- end }}
+
+{{- if .Values.metrics.enabled }}
+
+3. Metrics are exposed on port {{ .Values.metrics.port }} at path {{ .Values.metrics.path }}
+
+   To access metrics locally:
+   ```
+   kubectl port-forward -n {{ .Release.Namespace }} service/{{ include "kube-janitor-go.fullname" . }} 8080:{{ .Values.service.port }}
+   curl http://localhost:8080{{ .Values.metrics.path }}
+   ```
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+   Prometheus ServiceMonitor has been created for automatic scraping.
+{{- end }}
+{{- end }}
+
+4. Check the logs:
+   ```
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "kube-janitor-go.name" . }},app.kubernetes.io/instance={{ .Release.Name }} -f
+   ```
+
+{{- if .Values.janitor.rulesFile.enabled }}
+
+5. Rules are configured via ConfigMap. To update rules:
+   ```
+   kubectl edit configmap -n {{ .Release.Namespace }} {{ include "kube-janitor-go.fullname" . }}-rules
+   ```
+   
+   Current rules:
+   {{- range .Values.janitor.rulesFile.rules }}
+   - {{ .id }}: {{ .expression }} (TTL: {{ .ttl }})
+   {{- end }}
+{{- end }}
+
+6. To mark resources for deletion, use annotations:
+   - `janitor/ttl: "24h"` - Delete after 24 hours
+   - `janitor/expires: "2024-12-31T23:59:59Z"` - Delete at specific time
+
+For more information, visit: https://github.com/blaxel-ai/kube-janitor-go 

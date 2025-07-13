@@ -50,12 +50,30 @@ While the original Python-based kube-janitor works well, this Go implementation 
 
 ## Installation
 
-### Using Helm
+### Using Helm (Recommended)
 
 ```bash
+# From Helm repository
 helm repo add kube-janitor-go https://blaxel-ai.github.io/kube-janitor-go
+helm repo update
 helm install kube-janitor-go kube-janitor-go/kube-janitor-go
+
+# From GitHub releases
+helm install kube-janitor-go https://github.com/blaxel-ai/kube-janitor-go/releases/download/v1.0.0/kube-janitor-go-1.0.0.tgz
+
+# From source
+git clone https://github.com/blaxel-ai/kube-janitor-go.git
+cd kube-janitor-go
+helm install kube-janitor-go ./helm/kube-janitor-go
+
+# With custom values
+helm install kube-janitor-go ./helm/kube-janitor-go -f my-values.yaml
+
+# In specific namespace
+helm install kube-janitor-go ./helm/kube-janitor-go -n kube-janitor --create-namespace
 ```
+
+See the [Helm chart README](helm/kube-janitor-go/README.md) for detailed configuration options.
 
 ### Using kubectl
 

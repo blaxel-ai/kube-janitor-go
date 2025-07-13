@@ -27,9 +27,27 @@ jobs:
       - name: Run linting
         run: make lint
 
+  helm-test:
+    name: Test Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Lint Helm chart
+        run: make helm-lint
+
+      - name: Test Helm chart
+        run: make helm-test
+
   build:
     name: Build and Push Container Image
-    needs: test
+    needs: [test, helm-test]
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -69,3 +87,86 @@ jobs:
           tags: ${{ steps.set-tags.outputs.GHCR_TAG }}
           build-args: |
             VERSION=${{ github.sha }}
+
+  helm-publish:
+    name: Publish Helm Chart
+    needs: [build, helm-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Update Chart version for develop
+        if: github.ref == 'refs/heads/develop'
+        run: |
+          # For develop branch, append timestamp to version
+          CURRENT_VERSION=$(grep '^version:' helm/kube-janitor-go/Chart.yaml | awk '{print $2}')
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          NEW_VERSION="${CURRENT_VERSION}-dev.${TIMESTAMP}"
+          sed -i "s/^version:.*/version: $NEW_VERSION/" helm/kube-janitor-go/Chart.yaml
+          echo "Updated chart version to $NEW_VERSION"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Regenerate values documentation
+        run: |
+          cd helm/kube-janitor-go
+          python3 scripts/generate-values-docs.py
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p .chart-packages
+          helm package helm/kube-janitor-go -d .chart-packages
+
+      - name: Prepare gh-pages
+        run: |
+          # Try to clone gh-pages branch, create if it doesn't exist
+          git clone --branch gh-pages https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages 2>/dev/null || {
+            echo "gh-pages branch doesn't exist, creating it"
+            mkdir gh-pages
+            cd gh-pages
+            git init
+            git checkout -b gh-pages
+            git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            echo "# Helm Charts" > README.md
+            git add README.md
+            git config user.name "$GITHUB_ACTOR"
+            git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+            git commit -m "Initial gh-pages branch"
+            cd ..
+          }
+
+      - name: Update Helm repository index
+        run: |
+          # Copy new charts to gh-pages
+          cp .chart-packages/*.tgz gh-pages/ || true
+          cd gh-pages
+          
+          # Create or update the index
+          helm repo index . --url https://blaxel-ai.github.io/kube-janitor-go
+          
+          # Configure git
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
+          # Commit and push
+          git add .
+          git commit -m "Publish Helm chart from ${{ github.ref_name }} [skip ci]" || echo "No changes"
+          git push

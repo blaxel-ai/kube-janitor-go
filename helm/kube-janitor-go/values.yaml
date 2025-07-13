@@ -1,0 +1,285 @@
+# Default values for kube-janitor-go
+
+# Number of replicas for the deployment
+replicaCount: 1
+
+# Container image configuration
+image:
+  # Container image repository
+  repository: ghcr.io/blaxel-ai/kube-janitor-go
+  # Image pull policy
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+# Override the chart name
+nameOverride: ""
+# Override the full name of resources
+fullnameOverride: ""
+
+# Service account configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext: {}
+  # fsGroup: 2000
+
+# Container security context
+securityContext:
+  # Security capabilities configuration
+  capabilities:
+    # Linux capabilities to drop
+    drop:
+    - ALL
+  # Mount root filesystem as read-only
+  readOnlyRootFilesystem: true
+  # Run container as non-root user
+  runAsNonRoot: true
+  # User ID to run the container as
+  runAsUser: 1000
+  # Prevent privilege escalation
+  allowPrivilegeEscalation: false
+
+# Janitor configuration
+janitor:
+  # Run interval (default: 30s)
+  interval: 60s
+  
+  # Dry run mode - don't actually delete resources
+  dryRun: false
+  
+  # Run once and exit
+  runOnce: false
+  
+  # Log level: debug, info, warn, error
+  logLevel: info
+  
+  # Maximum number of concurrent workers
+  maxWorkers: 10
+  
+  # Resource types to include (empty means all)
+  includeResources: []
+  
+  # Resource types to exclude
+  excludeResources:
+    - events
+    - controllerrevisions
+  
+  # Namespaces to include (empty means all)
+  includeNamespaces: []
+  
+  # Namespaces to exclude
+  excludeNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+  
+  # Rules file configuration
+  rulesFile:
+    # Enable rules file
+    enabled: true
+    # Path to rules file (mounted from ConfigMap)
+    path: /config/rules.yaml
+    # Rules configuration
+    rules:
+      # Delete deployments without app label after 7 days
+      - id: require-app-label
+        resources:
+          - deployments
+          - statefulsets
+        expression: "!has(object.spec.template.metadata.labels.app)"
+        ttl: 7d
+      
+      # Delete PR deployments after 4 hours
+      - id: temporary-pr-deployments
+        resources:
+          - deployments
+        expression: 'object.metadata.name.startsWith("pr-")'
+        ttl: 4h
+      
+      # Clean up completed jobs after 1 day
+      - id: cleanup-completed-jobs
+        resources:
+          - jobs
+        expression: 'has(object.status.succeeded) && object.status.succeeded > 0'
+        ttl: 24h
+
+# Metrics configuration
+metrics:
+  # Enable metrics endpoint
+  enabled: true
+  # Metrics server port
+  port: 8080
+  # Metrics endpoint path
+  path: /metrics
+  
+  # Prometheus ServiceMonitor
+  serviceMonitor:
+    # Create ServiceMonitor resource
+    enabled: false
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Additional labels for the ServiceMonitor
+    labels: {}
+    # Additional annotations for the ServiceMonitor
+    annotations: {}
+    # Namespace where the ServiceMonitor will be created (defaults to release namespace)
+    namespace: ""
+    # Additional relabelings
+    relabelings: []
+    # Additional metric relabelings
+    metricRelabelings: []
+
+# Service configuration
+service:
+  # Service type
+  type: ClusterIP
+  # Service port
+  port: 8080
+  # Service annotations
+  annotations: {}
+
+# Resource limits and requests
+resources:
+  # Maximum resource consumption allowed
+  limits:
+    # CPU limit
+    cpu: 500m
+    # Memory limit
+    memory: 256Mi
+  # Minimum resources required
+  requests:
+    # CPU request
+    cpu: 100m
+    # Memory request
+    memory: 64Mi
+
+# Horizontal Pod Autoscaler configuration
+autoscaling:
+  # Enable HPA
+  enabled: false
+  # Minimum number of replicas
+  minReplicas: 1
+  # Maximum number of replicas
+  maxReplicas: 5
+  # Target CPU utilization percentage
+  targetCPUUtilizationPercentage: 80
+  # Target memory utilization percentage
+  targetMemoryUtilizationPercentage: 80
+
+# Node selector for pod assignment
+nodeSelector: {}
+
+# Tolerations for pod assignment
+tolerations: []
+
+# Affinity rules for pod assignment
+affinity: {}
+
+# Priority class name
+priorityClassName: ""
+
+# Pod disruption budget
+podDisruptionBudget:
+  # Enable PodDisruptionBudget
+  enabled: false
+  # Minimum available pods
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# Liveness probe configuration
+livenessProbe:
+  # Enable liveness probe
+  enabled: true
+  # HTTP GET probe configuration
+  httpGet:
+    # Probe path
+    path: /health
+    # Probe port
+    port: metrics
+  # Initial delay before probing
+  initialDelaySeconds: 10
+  # How often to perform the probe
+  periodSeconds: 30
+  # Probe timeout
+  timeoutSeconds: 5
+  # Minimum consecutive successes
+  successThreshold: 1
+  # Minimum consecutive failures
+  failureThreshold: 3
+
+# Readiness probe configuration
+readinessProbe:
+  # Enable readiness probe
+  enabled: true
+  # HTTP GET probe configuration
+  httpGet:
+    # Probe path
+    path: /health
+    # Probe port
+    port: metrics
+  # Initial delay before probing
+  initialDelaySeconds: 5
+  # How often to perform the probe
+  periodSeconds: 10
+  # Probe timeout
+  timeoutSeconds: 5
+  # Minimum consecutive successes
+  successThreshold: 1
+  # Minimum consecutive failures
+  failureThreshold: 3
+
+# Extra environment variables
+extraEnvVars: []
+# Example:
+# - name: FOO
+#   value: bar
+
+# Extra environment variables from secrets or configmaps
+extraEnvFrom: []
+# Example:
+# - secretRef:
+#     name: my-secret
+# - configMapRef:
+#     name: my-configmap
+
+# Extra volumes
+extraVolumes: []
+# Example:
+# - name: extra-volume
+#   configMap:
+#     name: extra-configmap
+
+# Extra volume mounts
+extraVolumeMounts: []
+# Example:
+# - name: extra-volume
+#   mountPath: /extra
+#   readOnly: true
+
+# Additional labels to add to all resources
+commonLabels: {}
+
+# Additional annotations to add to all resources
+commonAnnotations: {}
+
+# RBAC configuration
+rbac:
+  # Create RBAC resources
+  create: true
+  # Additional rules for the ClusterRole
+  additionalRules: [] 
