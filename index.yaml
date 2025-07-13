@@ -3,7 +3,7 @@ entries:
   kube-janitor-go:
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-13T21:23:07.730291075Z"
+    created: "2025-07-13T21:31:31.831704895Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: c252ade891b3b088dd55d719c6c34d1d52a1d3d60d9d5a7d399ebac2f025ab95
@@ -29,7 +29,33 @@ entries:
     version: 0.1.0
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-13T21:23:07.729495009Z"
+    created: "2025-07-13T21:31:31.830189646Z"
+    description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
+      after a configured TTL
+    digest: 4ee7e77c0238dc5523ea0258d005a8943203a0cdd270590628af5ceda6639874
+    home: https://github.com/blaxel-ai/kube-janitor-go
+    icon: https://raw.githubusercontent.com/blaxel-ai/kube-janitor-go/main/logo.png
+    keywords:
+    - kubernetes
+    - janitor
+    - cleanup
+    - ttl
+    - garbage-collection
+    - resource-management
+    maintainers:
+    - email: support@blaxel.ai
+      name: Blaxel AI
+      url: https://blaxel.ai
+    name: kube-janitor-go
+    sources:
+    - https://github.com/blaxel-ai/kube-janitor-go
+    type: application
+    urls:
+    - https://blaxel-ai.github.io/kube-janitor-go/kube-janitor-go-0.1.0-dev.20250713213129.tgz
+    version: 0.1.0-dev.20250713213129
+  - apiVersion: v2
+    appVersion: latest
+    created: "2025-07-13T21:31:31.829386638Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 971d397630990c132c1928b508c0cbec8ead45071a356f3668a153f0b908cf58
@@ -55,7 +81,7 @@ entries:
     version: 0.1.0-dev.20250713212106
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-13T21:23:07.728537601Z"
+    created: "2025-07-13T21:31:31.82843954Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5a2d7ea28a15a115d1181feaa445749898cb86f1feef07a87728c96b73e740f5
@@ -79,4 +105,4 @@ entries:
     urls:
     - https://blaxel-ai.github.io/kube-janitor-go/kube-janitor-go-0.1.0-dev.20250713184928.tgz
     version: 0.1.0-dev.20250713184928
-generated: "2025-07-13T21:23:07.727448868Z"
+generated: "2025-07-13T21:31:31.82744215Z"
