@@ -146,10 +146,13 @@ jobs:
             git checkout -b gh-pages
             git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
             echo "# Helm Charts" > README.md
+            echo "" >> README.md
+            echo "This branch hosts Helm charts for kube-janitor-go." >> README.md
             git add README.md
             git config user.name "$GITHUB_ACTOR"
             git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
             git commit -m "Initial gh-pages branch"
+            git push --set-upstream origin gh-pages || echo "Failed to push initial gh-pages"
             cd ..
           }
 
@@ -168,5 +171,9 @@ jobs:
           
           # Commit and push
           git add .
-          git commit -m "Publish Helm chart from ${{ github.ref_name }} [skip ci]" || echo "No changes"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Publish Helm chart from ${{ github.ref_name }} [skip ci]"
+            git push origin gh-pages || git push --set-upstream origin gh-pages
+          fi

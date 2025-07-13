@@ -55,9 +55,25 @@ jobs:
 
       - name: Checkout gh-pages branch
         run: |
-          git fetch origin gh-pages:gh-pages || git checkout --orphan gh-pages
-          git checkout gh-pages
-          git reset --hard origin/gh-pages || echo "No existing gh-pages"
+          # Configure git
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
+          # Fetch or create gh-pages branch
+          if git fetch origin gh-pages:gh-pages 2>/dev/null; then
+            git checkout gh-pages
+            git reset --hard origin/gh-pages
+          else
+            echo "Creating new gh-pages branch"
+            git checkout --orphan gh-pages
+            # Remove all files from the new branch
+            git rm -rf . || true
+            echo "# Helm Charts" > README.md
+            echo "" >> README.md
+            echo "This branch hosts Helm charts for kube-janitor-go." >> README.md
+            git add README.md
+            git commit -m "Initial gh-pages branch"
+          fi
 
       - name: Update Helm repository
         run: |
@@ -69,8 +85,12 @@ jobs:
       - name: Commit and push
         run: |
           git add .
-          git commit -m "Release Helm chart ${{ github.event.release.tag_name }}" || echo "No changes"
-          git push origin gh-pages
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Release Helm chart ${{ github.event.release.tag_name }}"
+            git push origin gh-pages || git push --set-upstream origin gh-pages
+          fi
 
   release:
     name: Build and Push Release Image
