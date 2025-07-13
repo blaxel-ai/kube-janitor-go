@@ -53,6 +53,12 @@ jobs:
         with:
           files: .gh-pages/*.tgz
 
+      - name: Stash changes before branch switch
+        run: |
+          # Stash any uncommitted changes (like Chart.yaml modifications)
+          git add -A
+          git stash save "Chart.yaml version changes" || true
+
       - name: Checkout gh-pages branch
         run: |
           # Configure git
