@@ -24,10 +24,10 @@ package: lint docs
 	@echo "Packaging Helm chart..."
 	@helm package . -d dist/
 
-## install: Install chart locally
+## install: Install chart locally (template only, no cluster required)
 install:
-	@echo "Installing Helm chart..."
-	@helm install kube-janitor-go . --dry-run --debug
+	@echo "Testing Helm chart installation (template mode)..."
+	@helm template kube-janitor-go . --debug
 
 ## clean: Clean generated files
 clean:
@@ -41,6 +41,6 @@ help:
 	@echo "  lint           Lint Helm chart"
 	@echo "  test           Test Helm chart rendering"
 	@echo "  package        Package Helm chart"
-	@echo "  install        Install chart locally (dry-run)"
+	@echo "  install        Test chart installation (template mode)"
 	@echo "  clean          Clean generated files"
 	@echo "  help           Show this help message" 

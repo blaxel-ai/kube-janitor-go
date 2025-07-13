@@ -83,10 +83,10 @@ helm-template:
 	@echo "Templating Helm chart..."
 	helm template kube-janitor-go helm/kube-janitor-go
 
-## helm-install-dry-run: Dry run Helm installation
+## helm-install-dry-run: Test Helm chart installation (no cluster required)
 helm-install-dry-run:
-	@echo "Dry run Helm installation..."
-	helm install kube-janitor-go helm/kube-janitor-go --dry-run --debug
+	@echo "Testing Helm chart installation (template mode)..."
+	helm template kube-janitor-go helm/kube-janitor-go --debug
 
 ## helm-docs: Generate Helm values documentation
 helm-docs:
