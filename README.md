@@ -50,6 +50,8 @@ While the original Python-based kube-janitor works well, this Go implementation 
 
 ## Installation
 
+> **Note**: Docker images are available for both `linux/amd64` and `linux/arm64` architectures.
+
 ### Using Helm (Recommended)
 
 ```bash
@@ -243,8 +245,14 @@ kube-janitor-go exposes Prometheus metrics on the `/metrics` endpoint:
 # Build binary
 make build
 
-# Build Docker image
+# Build Docker image (single architecture)
 make docker-build
+
+# Build multi-architecture Docker image (linux/amd64, linux/arm64)
+make docker-buildx
+
+# Build and push multi-architecture Docker image
+make docker-buildx-push
 
 # Run all tests
 make test
