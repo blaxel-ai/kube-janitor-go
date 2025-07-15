@@ -2,8 +2,34 @@ apiVersion: v1
 entries:
   kube-janitor-go:
   - apiVersion: v2
+    appVersion: 1.0.3
+    created: "2025-07-15T18:43:54.402550686Z"
+    description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
+      after a configured TTL
+    digest: 06fe63041ecb76c6f231bb269b16116e4565303d30a1b5b16429bc15717e2583
+    home: https://github.com/blaxel-ai/kube-janitor-go
+    icon: https://raw.githubusercontent.com/blaxel-ai/kube-janitor-go/main/logo.png
+    keywords:
+    - kubernetes
+    - janitor
+    - cleanup
+    - ttl
+    - garbage-collection
+    - resource-management
+    maintainers:
+    - email: support@blaxel.ai
+      name: Blaxel AI
+      url: https://blaxel.ai
+    name: kube-janitor-go
+    sources:
+    - https://github.com/blaxel-ai/kube-janitor-go
+    type: application
+    urls:
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-1.0.3.tgz
+    version: 1.0.3
+  - apiVersion: v2
     appVersion: 1.0.2
-    created: "2025-07-15T03:56:14.155225012Z"
+    created: "2025-07-15T18:43:54.401456737Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 4d7929e48ce3e8ea1ce6d6b78979f41f859d5e8f86cef92d5cdf8b03e7cdd6d8
@@ -25,11 +51,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-1.0.2.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-1.0.2.tgz
     version: 1.0.2
   - apiVersion: v2
     appVersion: 1.0.1
-    created: "2025-07-15T03:56:14.153671086Z"
+    created: "2025-07-15T18:43:54.400367347Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: cb8f5df9381745c7336a63be8d3fc7f0d36dd186a38d5d54c3999120b3354be4
@@ -51,11 +77,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-1.0.1.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-1.0.1.tgz
     version: 1.0.1
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-15T03:56:14.152808818Z"
+    created: "2025-07-15T18:43:54.398121538Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: a3e90238395340d97b9f4969757752775535457507ee7ab64c366a55468c922d
@@ -77,11 +103,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-0.1.0.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-0.1.0.tgz
     version: 0.1.0
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-15T03:56:14.1519253Z"
+    created: "2025-07-15T18:43:54.396983086Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5df830f7f4b403bcf6af9e7f6f76685649e7a4b07966f0b9d0c2659fe60775b7
@@ -103,11 +129,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-0.1.0-dev.20250715035550.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-0.1.0-dev.20250715035550.tgz
     version: 0.1.0-dev.20250715035550
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-15T03:56:14.150868849Z"
+    created: "2025-07-15T18:43:54.396009974Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 4ee7e77c0238dc5523ea0258d005a8943203a0cdd270590628af5ceda6639874
@@ -129,11 +155,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-0.1.0-dev.20250713213129.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-0.1.0-dev.20250713213129.tgz
     version: 0.1.0-dev.20250713213129
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-15T03:56:14.150001531Z"
+    created: "2025-07-15T18:43:54.395123935Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 971d397630990c132c1928b508c0cbec8ead45071a356f3668a153f0b908cf58
@@ -155,11 +181,11 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-0.1.0-dev.20250713212106.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-0.1.0-dev.20250713212106.tgz
     version: 0.1.0-dev.20250713212106
   - apiVersion: v2
     appVersion: latest
-    created: "2025-07-15T03:56:14.1490789Z"
+    created: "2025-07-15T18:43:54.394235161Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5a2d7ea28a15a115d1181feaa445749898cb86f1feef07a87728c96b73e740f5
@@ -181,6 +207,6 @@ entries:
     - https://github.com/blaxel-ai/kube-janitor-go
     type: application
     urls:
-    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.2/kube-janitor-go-0.1.0-dev.20250713184928.tgz
+    - https://github.com/blaxel-ai/kube-janitor-go/releases/download/1.0.3/kube-janitor-go-0.1.0-dev.20250713184928.tgz
     version: 0.1.0-dev.20250713184928
-generated: "2025-07-15T03:56:14.148025514Z"
+generated: "2025-07-15T18:43:54.393154488Z"
