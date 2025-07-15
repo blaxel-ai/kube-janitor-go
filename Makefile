@@ -46,6 +46,22 @@ docker-build:
 	@echo "Building Docker image..."
 	docker build -t $(DOCKER_IMAGE):$(VERSION) -t $(DOCKER_IMAGE):latest .
 
+## docker-buildx: Build multi-arch Docker image with buildx
+docker-buildx:
+	@echo "Building multi-arch Docker image..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_IMAGE):$(VERSION) \
+		-t $(DOCKER_IMAGE):latest \
+		--load .
+
+## docker-buildx-push: Build and push multi-arch Docker image
+docker-buildx-push:
+	@echo "Building and pushing multi-arch Docker image..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_IMAGE):$(VERSION) \
+		-t $(DOCKER_IMAGE):latest \
+		--push .
+
 ## docker-push: Push Docker image
 docker-push: docker-build
 	@echo "Pushing Docker image..."
