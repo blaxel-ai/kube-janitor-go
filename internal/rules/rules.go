@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -74,7 +76,7 @@ func New(rules []Rule) (*Engine, error) {
 		}
 
 		// Parse TTL
-		ttlDuration, err := time.ParseDuration(rule.TTL)
+		ttlDuration, err := parseExtendedDuration(rule.TTL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid TTL '%s' in rule '%s': %w", rule.TTL, rule.ID, err)
 		}
@@ -187,4 +189,72 @@ func pluralize(kind string) string {
 		// Default: lowercase and add 's'
 		return kind + "s"
 	}
+}
+
+// parseExtendedDuration parses duration strings with extended units:
+// - Standard Go units: h, m, s, ms, us, ns
+// - Extended units: d (days), w (weeks), month/months
+// Examples: "7d", "2w", "1month", "2w3d", "1month2w3d12h30m"
+func parseExtendedDuration(s string) (time.Duration, error) {
+	// First try standard Go duration parsing
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+
+	// Extended parsing with regex
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(months?|w|d|h|m|s|ms|us|µs|ns)`)
+	matches := re.FindAllStringSubmatch(s, -1)
+
+	if len(matches) == 0 {
+		return 0, fmt.Errorf("invalid duration format: %s", s)
+	}
+
+	var totalDuration time.Duration
+
+	for _, match := range matches {
+		value, err := strconv.ParseFloat(match[1], 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid number in duration: %s", match[1])
+		}
+
+		unit := match[2]
+		var unitDuration time.Duration
+
+		switch unit {
+		case "month", "months":
+			// Approximate month as 30 days
+			unitDuration = time.Duration(value * 30 * 24 * float64(time.Hour))
+		case "w":
+			unitDuration = time.Duration(value * 7 * 24 * float64(time.Hour))
+		case "d":
+			unitDuration = time.Duration(value * 24 * float64(time.Hour))
+		case "h":
+			unitDuration = time.Duration(value * float64(time.Hour))
+		case "m":
+			unitDuration = time.Duration(value * float64(time.Minute))
+		case "s":
+			unitDuration = time.Duration(value * float64(time.Second))
+		case "ms":
+			unitDuration = time.Duration(value * float64(time.Millisecond))
+		case "us", "µs":
+			unitDuration = time.Duration(value * float64(time.Microsecond))
+		case "ns":
+			unitDuration = time.Duration(value * float64(time.Nanosecond))
+		default:
+			return 0, fmt.Errorf("unknown time unit: %s", unit)
+		}
+
+		totalDuration += unitDuration
+	}
+
+	// Verify we consumed the entire string (ignoring whitespace)
+	consumed := ""
+	for _, match := range matches {
+		consumed += match[0]
+	}
+	if strings.ReplaceAll(s, " ", "") != strings.ReplaceAll(consumed, " ", "") {
+		return 0, fmt.Errorf("invalid duration format: %s", s)
+	}
+
+	return totalDuration, nil
 }

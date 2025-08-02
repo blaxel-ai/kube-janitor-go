@@ -3,6 +3,7 @@ package janitor
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,13 +14,17 @@ import (
 	"github.com/blaxel-ai/kube-janitor-go/internal/rules"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 )
 
 const (
@@ -50,6 +55,7 @@ type Janitor struct {
 	ResourceFilter  *ResourceFilter
 	WorkQueue       chan WorkItem
 	wg              sync.WaitGroup
+	EventRecorder   record.EventRecorder
 }
 
 // WorkItem represents an item to be processed
@@ -83,6 +89,15 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 	resourceFilter := NewResourceFilter(config.IncludeResources, config.ExcludeResources,
 		config.IncludeNamespaces, config.ExcludeNamespaces)
 
+	// Create event broadcaster and recorder
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events("")})
+	eventBroadcaster.StartStructuredLogging(0)
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{
+		Component: "kube-janitor",
+		Host:      os.Getenv("HOSTNAME"),
+	})
+
 	return &Janitor{
 		Clientset:       clientset,
 		DynamicClient:   dynamicClient,
@@ -92,6 +107,7 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		ResourceFilter:  resourceFilter,
 		WorkQueue:       make(chan WorkItem, 1000),
 		wg:              sync.WaitGroup{},
+		EventRecorder:   recorder,
 	}, nil
 }
 
@@ -278,8 +294,21 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 
 	logger.WithField("reason", reason).Info("Resource marked for deletion")
 
+	// Create a reference to the object for the event
+	ref := &corev1.ObjectReference{
+		APIVersion: item.Resource.Group + "/" + item.Resource.Version,
+		Kind:       item.Obj.GetKind(),
+		Namespace:  item.Namespace,
+		Name:       item.Name,
+		UID:        item.Obj.GetUID(),
+	}
+
 	if j.Config.DryRun {
 		logger.Info("DRY RUN: Would delete resource")
+		// Create event for dry-run
+		eventMessage := fmt.Sprintf("DRY RUN: Would delete %s %s/%s - %s",
+			item.Resource.Resource, item.Namespace, item.Name, reason)
+		j.EventRecorder.Event(ref, corev1.EventTypeNormal, "DryRunDeletion", eventMessage)
 		return
 	}
 
@@ -295,17 +324,26 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	if err != nil {
 		logger.WithError(err).Error("Failed to delete resource")
 		metrics.Errors.WithLabelValues("delete_resource").Inc()
+		// Create event for failed deletion
+		eventMessage := fmt.Sprintf("Failed to delete %s %s/%s: %v",
+			item.Resource.Resource, item.Namespace, item.Name, err)
+		j.EventRecorder.Event(ref, corev1.EventTypeWarning, "DeletionFailed", eventMessage)
 		return
 	}
 
 	logger.Info("Resource deleted")
 	metrics.ResourcesDeleted.WithLabelValues(item.Resource.Resource, item.Namespace, reason).Inc()
+
+	// Create event for successful deletion
+	eventMessage := fmt.Sprintf("Deleted %s %s/%s - %s",
+		item.Resource.Resource, item.Namespace, item.Name, reason)
+	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
 }
 
 func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 	// Check TTL annotation
 	if ttl, ok := obj.GetAnnotations()[annotationTTL]; ok {
-		duration, err := parseExtendedDuration(ttl)
+		duration, err := ParseExtendedDuration(ttl)
 		if err != nil {
 			logrus.WithError(err).WithField("ttl", ttl).Warn("Invalid TTL format")
 			return false, ""
@@ -382,11 +420,11 @@ func parseExpirationTime(expires string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse expiration time: %s", expires)
 }
 
-// parseExtendedDuration parses duration strings with extended units:
+// ParseExtendedDuration parses duration strings with extended units:
 // - Standard Go units: h, m, s, ms, us, ns
 // - Extended units: d (days), w (weeks), month/months
 // Examples: "7d", "2w", "1month", "2w3d", "1month2w3d12h30m"
-func parseExtendedDuration(s string) (time.Duration, error) {
+func ParseExtendedDuration(s string) (time.Duration, error) {
 	// First try standard Go duration parsing
 	if d, err := time.ParseDuration(s); err == nil {
 		return d, nil

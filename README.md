@@ -45,6 +45,7 @@ While the original Python-based kube-janitor works well, this Go implementation 
 - 🔍 Namespace and resource type filtering
 - 🚀 High performance with concurrent processing
 - 📊 Prometheus metrics for monitoring
+- 📋 Kubernetes event creation for audit trail and monitoring
 - 🐳 Lightweight container image
 - ⚡ Written in Go for better performance and lower resource usage
 
@@ -229,6 +230,40 @@ kube-janitor-go exposes Prometheus metrics on the `/metrics` endpoint:
 - `kube_janitor_resources_evaluated_total`: Total number of resources evaluated
 - `kube_janitor_cleanup_duration_seconds`: Histogram of cleanup run durations
 - `kube_janitor_errors_total`: Total number of errors encountered
+
+## Events
+
+kube-janitor-go creates Kubernetes events to provide an audit trail of its actions. Events are created for:
+
+- **Resource Deletion**: When a resource is successfully deleted
+- **Deletion Failure**: When a resource deletion fails
+- **Dry Run**: When a resource would be deleted (in dry-run mode)
+
+### Viewing Events
+
+```bash
+# View events for a specific resource
+kubectl describe deployment my-deployment
+
+# View all kube-janitor events in a namespace
+kubectl get events -n default --field-selector source=kube-janitor
+
+# Watch events in real-time
+kubectl get events -n default -w --field-selector source=kube-janitor
+
+# View events with more details
+kubectl get events -n default -o wide | grep kube-janitor
+```
+
+### Event Examples
+
+```
+LAST SEEN   TYPE     REASON            OBJECT                     MESSAGE
+5s          Normal   ResourceDeleted   deployment/test-app        Deleted deployment default/test-app - TTL expired (age: 2h1m, ttl: 2h)
+10s         Normal   ResourceDeleted   configmap/temp-config      Deleted configmap default/temp-config - Expiration time reached (2024-01-15T10:00:00Z)
+15s         Warning  DeletionFailed    service/broken-svc         Failed to delete service default/broken-svc: services "broken-svc" not found
+20s         Normal   DryRunDeletion    pod/test-pod              DRY RUN: Would delete pod default/test-pod - Rule 'cleanup-test-pods' matched (age: 1h, ttl: 30m)
+```
 
 ## Development
 
