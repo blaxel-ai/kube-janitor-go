@@ -143,7 +143,7 @@ func TestIntegrationTTLDeletion(t *testing.T) {
 	// Create event recorder
 	clientset := k8sfake.NewSimpleClientset()
 	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(func(format string, args ...interface{}) {
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
 		// Discard events in tests
 	})
 	recorder := eventBroadcaster.NewRecorder(runtime.NewScheme(), corev1.EventSource{Component: "kube-janitor-go-test"})

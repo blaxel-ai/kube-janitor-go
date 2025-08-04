@@ -206,7 +206,7 @@ func TestProcessItem(t *testing.T) {
 
 	// Create event recorder
 	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(func(format string, args ...interface{}) {
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
 		// Discard events in tests
 	})
 	recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "kube-janitor-go-test"})
@@ -266,7 +266,7 @@ func TestProcessItemDryRun(t *testing.T) {
 
 	// Create event recorder
 	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(func(format string, args ...interface{}) {
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
 		// Discard events in tests
 	})
 	recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "kube-janitor-go-test"})

@@ -63,7 +63,9 @@ func TestServerStart(t *testing.T) {
 			errChan <- err
 			return
 		}
-		defer listener.Close()
+		defer func() {
+			_ = listener.Close()
+		}()
 
 		port := listener.Addr().(*net.TCPAddr).Port
 
@@ -74,7 +76,9 @@ func TestServerStart(t *testing.T) {
 			// Test health endpoint
 			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 			if err == nil {
-				defer resp.Body.Close()
+				defer func() {
+					_ = resp.Body.Close()
+				}()
 				body, _ := io.ReadAll(resp.Body)
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
 				assert.Equal(t, "ok", string(body))
@@ -83,12 +87,14 @@ func TestServerStart(t *testing.T) {
 			// Test metrics endpoint
 			resp, err = http.Get(fmt.Sprintf("http://localhost:%d/metrics", port))
 			if err == nil {
-				defer resp.Body.Close()
+				defer func() {
+					_ = resp.Body.Close()
+				}()
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
 			}
 
 			// Shutdown the server
-			testServer.Close()
+			_ = testServer.Close()
 		}()
 
 		errChan <- testServer.Serve(listener)
