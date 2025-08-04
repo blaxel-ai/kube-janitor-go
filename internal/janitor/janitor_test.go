@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 )
 
 func TestParseExpirationTime(t *testing.T) {
@@ -203,11 +204,19 @@ func TestProcessItem(t *testing.T) {
 		return true, nil, nil
 	})
 
+	// Create event recorder
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
+		// Discard events in tests
+	})
+	recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "kube-janitor-go-test"})
+
 	j := &Janitor{
 		DynamicClient: dynamicClient,
 		Config: Config{
 			DryRun: false,
 		},
+		EventRecorder: recorder,
 	}
 
 	item := WorkItem{
@@ -255,11 +264,19 @@ func TestProcessItemDryRun(t *testing.T) {
 		return true, nil, nil
 	})
 
+	// Create event recorder
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
+		// Discard events in tests
+	})
+	recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "kube-janitor-go-test"})
+
 	j := &Janitor{
 		DynamicClient: dynamicClient,
 		Config: Config{
 			DryRun: true,
 		},
+		EventRecorder: recorder,
 	}
 
 	item := WorkItem{
@@ -506,13 +523,13 @@ func TestParseExtendedDuration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseExtendedDuration(tt.input)
+			got, err := ParseExtendedDuration(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseExtendedDuration() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ParseExtendedDuration() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.expected {
-				t.Errorf("parseExtendedDuration() = %v, want %v", got, tt.expected)
+				t.Errorf("ParseExtendedDuration() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -566,7 +583,7 @@ func TestParseExtendedDurationRealWorld(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			duration, err := parseExtendedDuration(tt.annotation)
+			duration, err := ParseExtendedDuration(tt.annotation)
 			if err != nil {
 				t.Fatalf("Failed to parse duration: %v", err)
 			}

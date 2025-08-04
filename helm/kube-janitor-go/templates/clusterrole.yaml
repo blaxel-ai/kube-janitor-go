@@ -14,6 +14,9 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
   {{- with .Values.rbac.additionalRules }}
   {{- toYaml . | nindent 2 }}
   {{- end }}

@@ -8,9 +8,9 @@ image:
   # Container image repository
   repository: ghcr.io/blaxel-ai/kube-janitor-go
   # Image pull policy
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: ""
+  tag: latest
 
 # Image pull secrets for private registries
 imagePullSecrets: []

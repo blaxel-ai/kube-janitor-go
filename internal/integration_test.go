@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 )
 
 // TestIntegrationResourceFiltering tests resource filtering
@@ -139,9 +140,17 @@ func TestIntegrationTTLDeletion(t *testing.T) {
 		MaxWorkers: 1,
 	}
 
+	// Create event recorder
+	clientset := k8sfake.NewSimpleClientset()
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartLogging(func(_ string, _ ...interface{}) {
+		// Discard events in tests
+	})
+	recorder := eventBroadcaster.NewRecorder(runtime.NewScheme(), corev1.EventSource{Component: "kube-janitor-go-test"})
+
 	// Create janitor instance
 	j := &janitor.Janitor{
-		Clientset:     k8sfake.NewSimpleClientset(),
+		Clientset:     clientset,
 		DynamicClient: dynamicClient,
 		Config:        config,
 		WorkQueue:     make(chan janitor.WorkItem, 10),
@@ -149,6 +158,7 @@ func TestIntegrationTTLDeletion(t *testing.T) {
 			[]string{}, []string{},
 			[]string{}, []string{},
 		),
+		EventRecorder: recorder,
 	}
 
 	// Process the expired pod
