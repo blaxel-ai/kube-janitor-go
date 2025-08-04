@@ -1,0 +1,79 @@
+# Example resources to demonstrate Kubernetes event creation
+# when kube-janitor deletes resources
+
+---
+# This deployment will be deleted after 5 minutes and generate an event
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment-with-ttl
+  namespace: default
+  annotations:
+    janitor/ttl: "5m"  # Will be deleted after 5 minutes
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-ttl
+  template:
+    metadata:
+      labels:
+        app: test-ttl
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+
+---
+# This ConfigMap will expire at a specific time and generate an event
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-configmap-expires
+  namespace: default
+  annotations:
+    janitor/expires: "2024-12-31T00:00:00Z"  # Will be deleted after this time
+data:
+  message: "This ConfigMap will expire on Dec 31, 2024"
+
+---
+# This Service without selector will be deleted by rules (if configured)
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-service-no-selector
+  namespace: default
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Instructions to view events:
+# 
+# 1. Apply these resources:
+#    kubectl apply -f examples/event-demo.yaml
+#
+# 2. Run kube-janitor (or wait for it to run if already deployed)
+#
+# 3. View events for a specific resource:
+#    kubectl describe deployment test-deployment-with-ttl
+#    kubectl describe configmap test-configmap-expires
+#
+# 4. View all events in the namespace:
+#    kubectl get events -n default --field-selector source=kube-janitor
+#
+# 5. Watch events in real-time:
+#    kubectl get events -n default -w --field-selector source=kube-janitor
+#
+# Example event output:
+# LAST SEEN   TYPE     REASON            OBJECT                              MESSAGE
+# 0s          Normal   ResourceDeleted   deployment/test-deployment-with-ttl  Deleted deployment default/test-deployment-with-ttl - TTL expired (age: 5m1s, ttl: 5m0s)
+# 0s          Normal   DryRunDeletion    configmap/test-configmap-expires     DRY RUN: Would delete configmap default/test-configmap-expires - Expiration time reached (2024-12-31T00:00:00Z) 
