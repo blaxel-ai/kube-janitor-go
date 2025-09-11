@@ -133,7 +133,7 @@ func TestShouldDelete(t *testing.T) {
 				},
 			},
 			wantDelete: true,
-			wantReason: "Expiration time reached",
+			wantReason: "Legacy expiration time reached",
 		},
 		{
 			name: "Expiration time not reached",

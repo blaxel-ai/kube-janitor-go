@@ -1,0 +1,264 @@
+# Examples of the new annotation-based expiration policies
+# These examples show how to use the improved annotation format instead of JSON
+
+---
+# Example 1: Simple max-age policy
+# This deployment will be deleted if it's older than 7 days
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-max-age-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-max-age: "7d"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simple-example
+  template:
+    metadata:
+      labels:
+        app: simple-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 2: Simple idle policy
+# This deployment will be deleted if it hasn't been used for more than 1 hour
+# Note: Requires the lastUsedAt annotation to be set by your application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-idle-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-idle: "1h"
+    lastUsedAt: "2025-09-11T14:53:56.754Z"  # Set by your application
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: idle-example
+  template:
+    metadata:
+      labels:
+        app: idle-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 3: Multiple rules - both max-age and idle
+# This deployment will be deleted if EITHER:
+# - It's older than 7 days, OR
+# - It hasn't been used for more than 1 hour
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multiple-rules-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-max-age: "7d"
+    janitor/delete-if-idle: "1h"
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multiple-rules-example
+  template:
+    metadata:
+      labels:
+        app: multiple-rules-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 4: Multiple rules of the same type
+# This deployment has multiple max-age rules with different timeouts
+# It will be deleted if it matches ANY of the rules
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multiple-max-age-rules
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-max-age: "7d"      # Rule 1: Delete after 7 days
+    janitor/delete-if-max-age-2: "30d"   # Rule 2: Delete after 30 days (backup)
+    janitor/delete-if-max-age-3: "90d"   # Rule 3: Delete after 90 days (final backup)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multiple-max-age-example
+  template:
+    metadata:
+      labels:
+        app: multiple-max-age-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 5: Complex scenario with multiple idle rules
+# This resource has multiple idle timeout rules
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multiple-idle-rules
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-idle: "1h"         # Delete if idle for 1 hour
+    janitor/delete-if-idle-2: "24h"      # Or delete if idle for 24 hours
+    janitor/delete-if-max-age: "7d"      # Also delete if older than 7 days
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multiple-idle-example
+  template:
+    metadata:
+      labels:
+        app: multiple-idle-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 6: Real-world PR deployment scenario
+# A deployment created for a pull request that should be cleaned up
+# after it's been idle for 2 hours or after 3 days maximum
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-123-feature-branch
+  namespace: dev-charles
+  labels:
+    pr-number: "123"
+    branch: "feature/new-awesome-feature"
+  annotations:
+    janitor/delete-if-idle: "2h"         # Clean up if no activity for 2 hours
+    janitor/delete-if-max-age: "3d"      # Force cleanup after 3 days
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pr-123
+  template:
+    metadata:
+      labels:
+        app: pr-123
+    spec:
+      containers:
+      - name: app
+        image: myapp:pr-123
+
+---
+# Example 7: Backward compatibility
+# Old TTL annotation still works alongside new annotations
+# New annotations take precedence over legacy ones
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backward-compatibility-example
+  namespace: dev-charles
+  annotations:
+    # New annotation (takes precedence)
+    janitor/delete-if-max-age: "1d"
+    # Legacy annotation (fallback)
+    janitor/ttl: "7d"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backward-compat
+  template:
+    metadata:
+      labels:
+        app: backward-compat
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 8: Service with idle timeout
+# A service that should be deleted if not used for 4 hours
+apiVersion: v1
+kind: Service
+metadata:
+  name: idle-service-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-idle: "4h"
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+spec:
+  selector:
+    app: my-service
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# Example 9: ConfigMap with max-age policy
+# A temporary config that should be deleted after 2 days
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temp-config
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-max-age: "2d"
+data:
+  config.yaml: |
+    temporary: true
+    cleanup: after-2-days
+
+---
+# Example 10: Your original example from the requirements
+# This matches the example you provided in your requirements
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bl-dev-0faf193228b78f5cc129a4847d81468f
+  namespace: dev-charles
+  uid: 37e9d2e9-9d32-4d28-8c04-ded90ae77cad
+  resourceVersion: '23689883'
+  generation: 2
+  creationTimestamp: '2025-09-11T14:53:51Z'
+  labels:
+    blaxel-name: base
+    blaxel-service-domain: execution
+    blaxel-service-group: executionplane
+    blaxel-type: sandboxes
+    blaxel-workspace: charles
+  annotations:
+    deployment.kubernetes.io/revision: '1'
+    lastUsedAt: '2025-09-11T14:53:56.754Z'
+    # New janitor annotations implementing your requirements:
+    janitor/delete-if-idle: "1h"     # Delete if inactive since 1h
+    janitor/delete-if-max-age: "7d"  # Delete if created more than 7d ago
+spec:
+  # ... rest of deployment spec
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bl-dev-example
+  template:
+    metadata:
+      labels:
+        app: bl-dev-example
+    spec:
+      containers:
+      - name: app
+        image: myapp:latest
