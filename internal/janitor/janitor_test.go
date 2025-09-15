@@ -194,6 +194,50 @@ func TestShouldDelete(t *testing.T) {
 			wantReason: "Delete date policy triggered",
 		},
 		{
+			name: "Delete-if-date with -0 suffix",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfDate + "-0": now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+		},
+		{
+			name: "Delete-if-date-0 with exact format from user",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							"janitor/delete-if-date-0": "2025-09-15T19:19:15.178507Z",
+						},
+					},
+				},
+			},
+			wantDelete: false, // This should be false since the date is in the future (assuming test runs before this time)
+		},
+		{
+			name: "Delete-if-date-0 with past date",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							"janitor/delete-if-date-0": now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+		},
+		{
 			name: "Archive-if-date annotation (mock - should not delete)",
 			obj: &unstructured.Unstructured{
 				Object: map[string]interface{}{
