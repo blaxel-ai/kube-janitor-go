@@ -150,6 +150,64 @@ func TestShouldDelete(t *testing.T) {
 			wantDelete: false,
 		},
 		{
+			name: "Delete-if-date time reached",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfDate: now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+		},
+		{
+			name: "Delete-if-date time not reached",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfDate: now.Add(1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: false,
+		},
+		{
+			name: "Delete-if-date numbered annotation",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfDate + "-1": now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+		},
+		{
+			name: "Archive-if-date annotation (mock - should not delete)",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationArchiveIfDate: now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete: false, // Archive functionality is not implemented yet
+		},
+		{
 			name: "No annotations",
 			obj: &unstructured.Unstructured{
 				Object: map[string]interface{}{
@@ -594,6 +652,64 @@ func TestParseExtendedDurationRealWorld(t *testing.T) {
 			if shouldDelete != tt.shouldMatch {
 				t.Errorf("Expected shouldDelete=%v for age=%v and TTL=%v, but got %v",
 					tt.shouldMatch, age, duration, shouldDelete)
+			}
+		})
+	}
+}
+
+func TestEvaluateDeleteIfDate(t *testing.T) {
+	j := &Janitor{}
+	now := time.Now()
+
+	tests := []struct {
+		name       string
+		value      string
+		wantDelete bool
+		wantReason string
+		wantError  bool
+	}{
+		{
+			name:       "Date in past (should delete)",
+			value:      now.Add(-1 * time.Hour).Format(time.RFC3339),
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+			wantError:  false,
+		},
+		{
+			name:       "Date in future (should not delete)",
+			value:      now.Add(1 * time.Hour).Format(time.RFC3339),
+			wantDelete: false,
+			wantError:  false,
+		},
+		{
+			name:       "Date only format (should delete)",
+			value:      now.Add(-24 * time.Hour).Format("2006-01-02"),
+			wantDelete: true,
+			wantReason: "Delete date policy triggered",
+			wantError:  false,
+		},
+		{
+			name:      "Invalid date format",
+			value:     "invalid-date",
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{}
+			gotDelete, gotReason, err := j.evaluateDeleteIfDate(tt.value, obj)
+
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantDelete, gotDelete)
+
+			if tt.wantDelete {
+				assert.Contains(t, gotReason, tt.wantReason)
 			}
 		})
 	}

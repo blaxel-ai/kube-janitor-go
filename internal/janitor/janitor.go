@@ -35,8 +35,10 @@ const (
 	// New policy-based annotations
 	annotationDeleteIfMaxAge  = "janitor/delete-if-max-age"
 	annotationDeleteIfIdle    = "janitor/delete-if-idle"
+	annotationDeleteIfDate    = "janitor/delete-if-date"
 	annotationArchiveIfMaxAge = "janitor/archive-if-max-age" // Future implementation
 	annotationArchiveIfIdle   = "janitor/archive-if-idle"    // Future implementation
+	annotationArchiveIfDate   = "janitor/archive-if-date"    // Future implementation
 
 	// Timestamp annotations
 	annotationLastUsedAt = "lastUsedAt"
@@ -370,6 +372,31 @@ func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstruc
 	return false, "", nil
 }
 
+// evaluateDeleteIfDate checks if resource should be deleted based on expiration date
+func (j *Janitor) evaluateDeleteIfDate(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	expirationTime, err := parseExpirationTime(value)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid date format: %w", err)
+	}
+
+	if time.Now().After(expirationTime) {
+		return true, fmt.Sprintf("Delete date policy triggered (expiration: %s)", value), nil
+	}
+	return false, "", nil
+}
+
+// evaluateArchiveIfDate is a mock implementation for future archive-if-date functionality
+func (j *Janitor) evaluateArchiveIfDate(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	// Mock implementation - archive functionality not yet implemented
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+		"value":     value,
+	}).Debug("Archive-if-date policy detected but archive functionality is not yet implemented")
+	return false, "", nil
+}
+
 // evaluateDeleteIfIdle checks if resource should be deleted based on idle time
 func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructured) (bool, string, error) {
 	logrus.WithFields(logrus.Fields{
@@ -512,6 +539,57 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		}
 		if shouldDelete {
 			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+		}
+	}
+
+	// Check all delete-if-date annotations (including numbered variants like janitor/delete-if-date-1, janitor/delete-if-date-2, etc.)
+	dateAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfDate)
+	logrus.WithFields(logrus.Fields{
+		"resource":        obj.GetKind(),
+		"namespace":       obj.GetNamespace(),
+		"name":            obj.GetName(),
+		"dateAnnotations": len(dateAnnotations),
+	}).Debug("Checking delete-if-date annotations")
+	for annotationKey, annotationValue := range dateAnnotations {
+		shouldDelete, reason, err := j.evaluateDeleteIfDate(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate delete-if-date policy")
+			continue
+		}
+		if shouldDelete {
+			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+		}
+	}
+
+	// Check all archive-if-date annotations (including numbered variants) - mock implementation
+	archiveDateAnnotations := findAnnotationsWithPrefix(annotations, annotationArchiveIfDate)
+	logrus.WithFields(logrus.Fields{
+		"resource":               obj.GetKind(),
+		"namespace":              obj.GetNamespace(),
+		"name":                   obj.GetName(),
+		"archiveDateAnnotations": len(archiveDateAnnotations),
+	}).Debug("Checking archive-if-date annotations")
+	for annotationKey, annotationValue := range archiveDateAnnotations {
+		shouldArchive, reason, err := j.evaluateArchiveIfDate(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate archive-if-date policy")
+			continue
+		}
+		if shouldArchive {
+			// Archive functionality not yet implemented, so we just log for now
+			logrus.WithFields(logrus.Fields{
+				"resource":   obj.GetKind(),
+				"namespace":  obj.GetNamespace(),
+				"name":       obj.GetName(),
+				"annotation": annotationKey,
+				"reason":     reason,
+			}).Info("Archive-if-date policy would trigger (not yet implemented)")
 		}
 	}
 

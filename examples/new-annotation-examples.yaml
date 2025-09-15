@@ -1,5 +1,6 @@
 # Examples of the new annotation-based expiration policies
 # These examples show how to use the improved annotation format instead of JSON
+# Includes the new delete-if-date and archive-if-date annotations
 
 ---
 # Example 1: Simple max-age policy
@@ -262,3 +263,126 @@ spec:
       containers:
       - name: app
         image: myapp:latest
+
+---
+# Example 8: Delete-if-date policy (new annotation)
+# This deployment will be deleted after the specified date/time
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delete-if-date-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-date: "2024-12-31T23:59:59Z"  # Delete after this specific date/time
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: delete-date-example
+  template:
+    metadata:
+      labels:
+        app: delete-date-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 9: Delete-if-date with date-only format
+# This deployment will be deleted after the specified date (midnight UTC)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delete-if-date-simple-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-date: "2024-12-31"  # Delete after this date (midnight UTC)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: delete-date-simple
+  template:
+    metadata:
+      labels:
+        app: delete-date-simple
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 10: Archive-if-date policy (future implementation)
+# This annotation is recognized but archive functionality is not yet implemented
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: archive-if-date-example
+  namespace: dev-charles
+  annotations:
+    janitor/archive-if-date: "2024-12-31T23:59:59Z"  # Would archive after this date (when implemented)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: archive-date-example
+  template:
+    metadata:
+      labels:
+        app: archive-date-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 11: Multiple date policies with numbered annotations
+# This deployment has multiple delete-if-date policies
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multiple-date-policies-example
+  namespace: dev-charles
+  annotations:
+    janitor/delete-if-date-1: "2024-12-31T23:59:59Z"  # First date condition
+    janitor/delete-if-date-2: "2025-01-15"            # Second date condition (date-only format)
+    janitor/archive-if-date-1: "2024-11-30"           # Archive condition (mock)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multiple-date-example
+  template:
+    metadata:
+      labels:
+        app: multiple-date-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+---
+# Example 12: Backward compatibility - old expires annotation still works
+# This shows that the legacy janitor/expires annotation continues to work alongside the new ones
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backward-compatibility-example
+  namespace: dev-charles
+  annotations:
+    janitor/expires: "2024-12-31T23:59:59Z"       # Legacy annotation (still supported)
+    janitor/delete-if-date: "2025-01-15"          # New annotation (same functionality)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backward-compat-example
+  template:
+    metadata:
+      labels:
+        app: backward-compat-example
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
