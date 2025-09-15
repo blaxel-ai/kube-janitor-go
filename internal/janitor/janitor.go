@@ -372,8 +372,24 @@ func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstruc
 
 // evaluateDeleteIfIdle checks if resource should be deleted based on idle time
 func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	logrus.WithFields(logrus.Fields{
+		"resource":             obj.GetKind(),
+		"namespace":            obj.GetNamespace(),
+		"name":                 obj.GetName(),
+		"value":                value,
+		"annotationLastUsedAt": annotationLastUsedAt,
+	}).Debug("Starting evaluateDeleteIfIdle")
+
 	// Check if lastUsedAt annotation exists
 	lastUsedAtStr, exists := obj.GetAnnotations()[annotationLastUsedAt]
+	logrus.WithFields(logrus.Fields{
+		"resource":      obj.GetKind(),
+		"namespace":     obj.GetNamespace(),
+		"name":          obj.GetName(),
+		"lastUsedAtStr": lastUsedAtStr,
+		"exists":        exists,
+	}).Debug("Checking lastUsedAt annotation")
+
 	if !exists {
 		// If no lastUsedAt annotation, ignore this policy
 		logrus.WithFields(logrus.Fields{
@@ -386,15 +402,37 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 
 	lastUsedAt, err := time.Parse(time.RFC3339, lastUsedAtStr)
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"resource":      obj.GetKind(),
+			"namespace":     obj.GetNamespace(),
+			"name":          obj.GetName(),
+			"lastUsedAtStr": lastUsedAtStr,
+		}).Debug("Failed to parse lastUsedAt timestamp")
 		return false, "", fmt.Errorf("invalid lastUsedAt format: %w", err)
 	}
 
 	duration, err := ParseExtendedDuration(value)
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"resource":  obj.GetKind(),
+			"namespace": obj.GetNamespace(),
+			"name":      obj.GetName(),
+			"value":     value,
+		}).Debug("Failed to parse duration")
 		return false, "", fmt.Errorf("invalid duration format: %w", err)
 	}
 
 	idleTime := time.Since(lastUsedAt)
+	logrus.WithFields(logrus.Fields{
+		"resource":     obj.GetKind(),
+		"namespace":    obj.GetNamespace(),
+		"name":         obj.GetName(),
+		"idleTime":     idleTime,
+		"duration":     duration,
+		"shouldDelete": idleTime > duration,
+		"lastUsedAt":   lastUsedAt,
+	}).Debug("Evaluating idle time")
+
 	if idleTime > duration {
 		return true, fmt.Sprintf("Delete idle policy triggered (idle: %s, max-idle: %s)", idleTime, duration), nil
 	}
@@ -418,8 +456,21 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		annotations = make(map[string]string)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"resource":    obj.GetKind(),
+		"namespace":   obj.GetNamespace(),
+		"name":        obj.GetName(),
+		"annotations": annotations,
+	}).Debug("Evaluating resource for deletion")
+
 	// Check all delete-if-max-age annotations (including numbered variants like janitor/delete-if-max-age-1, janitor/delete-if-max-age-2, etc.)
 	maxAgeAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfMaxAge)
+	logrus.WithFields(logrus.Fields{
+		"resource":          obj.GetKind(),
+		"namespace":         obj.GetNamespace(),
+		"name":              obj.GetName(),
+		"maxAgeAnnotations": len(maxAgeAnnotations),
+	}).Debug("Checking delete-if-max-age annotations")
 	for annotationKey, annotationValue := range maxAgeAnnotations {
 		shouldDelete, reason, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
 		if err != nil {
@@ -436,7 +487,21 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 
 	// Check all delete-if-idle annotations (including numbered variants like janitor/delete-if-idle-1, janitor/delete-if-idle-2, etc.)
 	idleAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfIdle)
+	logrus.WithFields(logrus.Fields{
+		"resource":               obj.GetKind(),
+		"namespace":              obj.GetNamespace(),
+		"name":                   obj.GetName(),
+		"idleAnnotations":        len(idleAnnotations),
+		"annotationDeleteIfIdle": annotationDeleteIfIdle,
+	}).Debug("Checking delete-if-idle annotations")
 	for annotationKey, annotationValue := range idleAnnotations {
+		logrus.WithFields(logrus.Fields{
+			"resource":   obj.GetKind(),
+			"namespace":  obj.GetNamespace(),
+			"name":       obj.GetName(),
+			"annotation": annotationKey,
+			"value":      annotationValue,
+		}).Debug("Processing delete-if-idle annotation")
 		shouldDelete, reason, err := j.evaluateDeleteIfIdle(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
@@ -451,6 +516,12 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 	}
 
 	// Fallback to legacy TTL annotation for backward compatibility
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+		"hasTTL":    annotations[annotationTTL] != "",
+	}).Debug("Checking legacy TTL annotation")
 	if ttl, ok := annotations[annotationTTL]; ok {
 		duration, err := ParseExtendedDuration(ttl)
 		if err != nil {
@@ -480,6 +551,12 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 	}
 
 	// Check rules
+	logrus.WithFields(logrus.Fields{
+		"resource":      obj.GetKind(),
+		"namespace":     obj.GetNamespace(),
+		"name":          obj.GetName(),
+		"hasRuleEngine": j.RuleEngine != nil,
+	}).Debug("Checking CEL rules")
 	if j.RuleEngine != nil {
 		if rule, ttl := j.RuleEngine.Evaluate(obj); rule != nil {
 			age := time.Since(obj.GetCreationTimestamp().Time)
@@ -489,6 +566,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		}
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+	}).Debug("No deletion conditions met - resource will be kept")
 	return false, ""
 }
 
