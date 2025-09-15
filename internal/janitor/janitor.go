@@ -373,7 +373,7 @@ func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstruc
 }
 
 // evaluateDeleteIfDate checks if resource should be deleted based on expiration date
-func (j *Janitor) evaluateDeleteIfDate(value string, obj *unstructured.Unstructured) (bool, string, error) {
+func (j *Janitor) evaluateDeleteIfDate(value string, _ *unstructured.Unstructured) (bool, string, error) {
 	expirationTime, err := parseExpirationTime(value)
 	if err != nil {
 		return false, "", fmt.Errorf("invalid date format: %w", err)
