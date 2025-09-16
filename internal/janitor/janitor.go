@@ -28,8 +28,26 @@ import (
 )
 
 const (
+	// Legacy annotations (for backward compatibility)
 	annotationTTL     = "janitor/ttl"
 	annotationExpires = "janitor/expires"
+
+	// New policy-based annotations
+	annotationDeleteIfMaxAge  = "janitor/delete-if-max-age"
+	annotationDeleteIfIdle    = "janitor/delete-if-idle"
+	annotationDeleteIfDate    = "janitor/delete-if-date"
+	annotationArchiveIfMaxAge = "janitor/archive-if-max-age" // Future implementation
+	annotationArchiveIfIdle   = "janitor/archive-if-idle"    // Future implementation
+	annotationArchiveIfDate   = "janitor/archive-if-date"    // Future implementation
+
+	// Timestamp annotations
+	annotationLastUsedAt = "lastUsedAt"
+)
+
+// Action constants
+const (
+	ActionDelete  = "delete"
+	ActionArchive = "archive" // Future implementation
 )
 
 // Config holds the janitor configuration
@@ -340,9 +358,268 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
 }
 
+// evaluateDeleteIfMaxAge checks if resource should be deleted based on max age
+func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	duration, err := ParseExtendedDuration(value)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid duration format: %w", err)
+	}
+
+	age := time.Since(obj.GetCreationTimestamp().Time)
+	if age > duration {
+		return true, fmt.Sprintf("Delete max-age policy triggered (age: %s, max-age: %s)", age, duration), nil
+	}
+	return false, "", nil
+}
+
+// evaluateDeleteIfDate checks if resource should be deleted based on expiration date
+func (j *Janitor) evaluateDeleteIfDate(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	expirationTime, err := parseExpirationTime(value)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid date format: %w", err)
+	}
+
+	now := time.Now()
+	if now.After(expirationTime) {
+		logrus.WithFields(logrus.Fields{
+			"resource":       obj.GetKind(),
+			"namespace":      obj.GetNamespace(),
+			"name":           obj.GetName(),
+			"expirationTime": expirationTime,
+			"currentTime":    now,
+			"expired":        true,
+		}).Debug("Delete-if-date policy: resource expired")
+		return true, fmt.Sprintf("Delete date policy triggered (expiration: %s)", value), nil
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"resource":        obj.GetKind(),
+		"namespace":       obj.GetNamespace(),
+		"name":            obj.GetName(),
+		"expirationTime":  expirationTime,
+		"currentTime":     now,
+		"timeUntilExpiry": expirationTime.Sub(now),
+		"expired":         false,
+	}).Debug("Delete-if-date policy: resource not yet expired")
+	return false, "", nil
+}
+
+// evaluateArchiveIfDate is a mock implementation for future archive-if-date functionality
+func (j *Janitor) evaluateArchiveIfDate(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	// Mock implementation - archive functionality not yet implemented
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+		"value":     value,
+	}).Debug("Archive-if-date policy detected but archive functionality is not yet implemented")
+	return false, "", nil
+}
+
+// evaluateDeleteIfIdle checks if resource should be deleted based on idle time
+func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructured) (bool, string, error) {
+	logrus.WithFields(logrus.Fields{
+		"resource":             obj.GetKind(),
+		"namespace":            obj.GetNamespace(),
+		"name":                 obj.GetName(),
+		"value":                value,
+		"annotationLastUsedAt": annotationLastUsedAt,
+	}).Debug("Starting evaluateDeleteIfIdle")
+
+	// Check if lastUsedAt annotation exists
+	lastUsedAtStr, exists := obj.GetAnnotations()[annotationLastUsedAt]
+	logrus.WithFields(logrus.Fields{
+		"resource":      obj.GetKind(),
+		"namespace":     obj.GetNamespace(),
+		"name":          obj.GetName(),
+		"lastUsedAtStr": lastUsedAtStr,
+		"exists":        exists,
+	}).Debug("Checking lastUsedAt annotation")
+
+	if !exists {
+		// If no lastUsedAt annotation, ignore this policy
+		logrus.WithFields(logrus.Fields{
+			"resource":  obj.GetKind(),
+			"namespace": obj.GetNamespace(),
+			"name":      obj.GetName(),
+		}).Debug("Delete-if-idle policy ignored: no lastUsedAt annotation found")
+		return false, "", nil
+	}
+
+	lastUsedAt, err := time.Parse(time.RFC3339, lastUsedAtStr)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"resource":      obj.GetKind(),
+			"namespace":     obj.GetNamespace(),
+			"name":          obj.GetName(),
+			"lastUsedAtStr": lastUsedAtStr,
+		}).Debug("Failed to parse lastUsedAt timestamp")
+		return false, "", fmt.Errorf("invalid lastUsedAt format: %w", err)
+	}
+
+	duration, err := ParseExtendedDuration(value)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"resource":  obj.GetKind(),
+			"namespace": obj.GetNamespace(),
+			"name":      obj.GetName(),
+			"value":     value,
+		}).Debug("Failed to parse duration")
+		return false, "", fmt.Errorf("invalid duration format: %w", err)
+	}
+
+	idleTime := time.Since(lastUsedAt)
+	logrus.WithFields(logrus.Fields{
+		"resource":     obj.GetKind(),
+		"namespace":    obj.GetNamespace(),
+		"name":         obj.GetName(),
+		"idleTime":     idleTime,
+		"duration":     duration,
+		"shouldDelete": idleTime > duration,
+		"lastUsedAt":   lastUsedAt,
+	}).Debug("Evaluating idle time")
+
+	if idleTime > duration {
+		return true, fmt.Sprintf("Delete idle policy triggered (idle: %s, max-idle: %s)", idleTime, duration), nil
+	}
+	return false, "", nil
+}
+
+// findAnnotationsWithPrefix finds all annotations that start with the given prefix
+func findAnnotationsWithPrefix(annotations map[string]string, prefix string) map[string]string {
+	result := make(map[string]string)
+	for key, value := range annotations {
+		if strings.HasPrefix(key, prefix) {
+			result[key] = value
+		}
+	}
+	return result
+}
+
 func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
-	// Check TTL annotation
-	if ttl, ok := obj.GetAnnotations()[annotationTTL]; ok {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"resource":    obj.GetKind(),
+		"namespace":   obj.GetNamespace(),
+		"name":        obj.GetName(),
+		"annotations": annotations,
+	}).Debug("Evaluating resource for deletion")
+
+	// Check all delete-if-max-age annotations (including numbered variants like janitor/delete-if-max-age-1, janitor/delete-if-max-age-2, etc.)
+	maxAgeAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfMaxAge)
+	logrus.WithFields(logrus.Fields{
+		"resource":          obj.GetKind(),
+		"namespace":         obj.GetNamespace(),
+		"name":              obj.GetName(),
+		"maxAgeAnnotations": len(maxAgeAnnotations),
+	}).Debug("Checking delete-if-max-age annotations")
+	for annotationKey, annotationValue := range maxAgeAnnotations {
+		shouldDelete, reason, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate delete-if-max-age policy")
+			continue
+		}
+		if shouldDelete {
+			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+		}
+	}
+
+	// Check all delete-if-idle annotations (including numbered variants like janitor/delete-if-idle-1, janitor/delete-if-idle-2, etc.)
+	idleAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfIdle)
+	logrus.WithFields(logrus.Fields{
+		"resource":               obj.GetKind(),
+		"namespace":              obj.GetNamespace(),
+		"name":                   obj.GetName(),
+		"idleAnnotations":        len(idleAnnotations),
+		"annotationDeleteIfIdle": annotationDeleteIfIdle,
+	}).Debug("Checking delete-if-idle annotations")
+	for annotationKey, annotationValue := range idleAnnotations {
+		logrus.WithFields(logrus.Fields{
+			"resource":   obj.GetKind(),
+			"namespace":  obj.GetNamespace(),
+			"name":       obj.GetName(),
+			"annotation": annotationKey,
+			"value":      annotationValue,
+		}).Debug("Processing delete-if-idle annotation")
+		shouldDelete, reason, err := j.evaluateDeleteIfIdle(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate delete-if-idle policy")
+			continue
+		}
+		if shouldDelete {
+			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+		}
+	}
+
+	// Check all delete-if-date annotations (including numbered variants like janitor/delete-if-date-1, janitor/delete-if-date-2, etc.)
+	dateAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfDate)
+	logrus.WithFields(logrus.Fields{
+		"resource":        obj.GetKind(),
+		"namespace":       obj.GetNamespace(),
+		"name":            obj.GetName(),
+		"dateAnnotations": len(dateAnnotations),
+	}).Debug("Checking delete-if-date annotations")
+	for annotationKey, annotationValue := range dateAnnotations {
+		shouldDelete, reason, err := j.evaluateDeleteIfDate(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate delete-if-date policy")
+			continue
+		}
+		if shouldDelete {
+			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+		}
+	}
+
+	// Check all archive-if-date annotations (including numbered variants) - mock implementation
+	archiveDateAnnotations := findAnnotationsWithPrefix(annotations, annotationArchiveIfDate)
+	logrus.WithFields(logrus.Fields{
+		"resource":               obj.GetKind(),
+		"namespace":              obj.GetNamespace(),
+		"name":                   obj.GetName(),
+		"archiveDateAnnotations": len(archiveDateAnnotations),
+	}).Debug("Checking archive-if-date annotations")
+	for annotationKey, annotationValue := range archiveDateAnnotations {
+		shouldArchive, reason, err := j.evaluateArchiveIfDate(annotationValue, obj)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"annotation": annotationKey,
+				"value":      annotationValue,
+			}).Warn("Failed to evaluate archive-if-date policy")
+			continue
+		}
+		if shouldArchive {
+			// Archive functionality not yet implemented, so we just log for now
+			logrus.WithFields(logrus.Fields{
+				"resource":   obj.GetKind(),
+				"namespace":  obj.GetNamespace(),
+				"name":       obj.GetName(),
+				"annotation": annotationKey,
+				"reason":     reason,
+			}).Info("Archive-if-date policy would trigger (not yet implemented)")
+		}
+	}
+
+	// Fallback to legacy TTL annotation for backward compatibility
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+		"hasTTL":    annotations[annotationTTL] != "",
+	}).Debug("Checking legacy TTL annotation")
+	if ttl, ok := annotations[annotationTTL]; ok {
 		duration, err := ParseExtendedDuration(ttl)
 		if err != nil {
 			logrus.WithError(err).WithField("ttl", ttl).Warn("Invalid TTL format")
@@ -351,13 +628,13 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 
 		age := time.Since(obj.GetCreationTimestamp().Time)
 		if age > duration {
-			return true, fmt.Sprintf("TTL expired (age: %s, ttl: %s)", age, duration)
+			return true, fmt.Sprintf("Legacy TTL expired (age: %s, ttl: %s)", age, duration)
 		}
 		return false, ""
 	}
 
-	// Check expiration annotation
-	if expires, ok := obj.GetAnnotations()[annotationExpires]; ok {
+	// Fallback to legacy expiration annotation for backward compatibility
+	if expires, ok := annotations[annotationExpires]; ok {
 		expirationTime, err := parseExpirationTime(expires)
 		if err != nil {
 			logrus.WithError(err).WithField("expires", expires).Warn("Invalid expiration format")
@@ -365,12 +642,18 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		}
 
 		if time.Now().After(expirationTime) {
-			return true, fmt.Sprintf("Expiration time reached (%s)", expires)
+			return true, fmt.Sprintf("Legacy expiration time reached (%s)", expires)
 		}
 		return false, ""
 	}
 
 	// Check rules
+	logrus.WithFields(logrus.Fields{
+		"resource":      obj.GetKind(),
+		"namespace":     obj.GetNamespace(),
+		"name":          obj.GetName(),
+		"hasRuleEngine": j.RuleEngine != nil,
+	}).Debug("Checking CEL rules")
 	if j.RuleEngine != nil {
 		if rule, ttl := j.RuleEngine.Evaluate(obj); rule != nil {
 			age := time.Since(obj.GetCreationTimestamp().Time)
@@ -380,6 +663,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		}
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"resource":  obj.GetKind(),
+		"namespace": obj.GetNamespace(),
+		"name":      obj.GetName(),
+	}).Debug("No deletion conditions met - resource will be kept")
 	return false, ""
 }
 

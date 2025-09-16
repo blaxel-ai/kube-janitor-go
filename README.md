@@ -94,12 +94,84 @@ make build
 
 ## Usage
 
-### TTL Annotations
+### Expiration Policies
 
-Mark resources for deletion using annotations:
+kube-janitor-go supports multiple ways to define when resources should be deleted. The new annotation-based system allows for more flexible and powerful cleanup policies.
 
-#### `janitor/ttl`
-Relative time duration (e.g., `24h`, `7d`, `30m`) after which the resource should be deleted:
+#### New Annotation Format (Recommended)
+
+##### Max-Age Policies
+Delete resources that are older than the specified duration since their creation time:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  annotations:
+    janitor/delete-if-max-age: "7d"  # Delete if older than 7 days
+spec:
+  # ... deployment spec
+```
+
+##### Idle Policies
+Delete resources that haven't been used for longer than the specified duration. Requires the `lastUsedAt` annotation to be set by your application:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  annotations:
+    janitor/delete-if-idle: "1h"                        # Delete if idle for 1 hour
+    lastUsedAt: "2025-09-11T14:53:56.754Z"             # Set by your application
+spec:
+  # ... deployment spec
+```
+
+**Important**: If the `lastUsedAt` annotation is not present, idle policies are ignored (not treated as an error).
+
+##### Multiple Rules Support
+You can define multiple rules of the same type using numbered suffixes, or combine different policy types:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-environment
+  annotations:
+    # Multiple max-age rules
+    janitor/delete-if-max-age: "7d"      # Rule 1: Delete after 7 days
+    janitor/delete-if-max-age-2: "30d"   # Rule 2: Backup rule after 30 days
+    
+    # Multiple idle rules  
+    janitor/delete-if-idle: "1h"         # Rule 1: Delete if idle for 1 hour
+    janitor/delete-if-idle-2: "24h"      # Rule 2: Backup rule if idle for 24 hours
+    
+    # Mixed policy types
+    janitor/delete-if-max-age-3: "3d"    # Also delete after 3 days maximum
+    
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+spec:
+  # ... deployment spec
+```
+
+**Rule Evaluation Logic**: If ANY rule matches, the resource will be deleted.
+
+#### Duration Format
+
+The system supports extended duration formats:
+
+- **Standard Go durations**: `1h30m`, `2h`, `30m`
+- **Days**: `7d`, `1.5d`  
+- **Weeks**: `2w`, `0.5w`
+- **Months**: `1month`, `3months` (approximated as 30 days)
+- **Combined**: `1month2w3d12h30m`
+
+#### Legacy Annotations (Still Supported)
+
+##### `janitor/ttl`
+Relative time duration after which the resource should be deleted:
 
 ```yaml
 apiVersion: v1
@@ -114,7 +186,7 @@ spec:
     image: nginx
 ```
 
-#### `janitor/expires`
+##### `janitor/expires`
 Absolute timestamp for deletion:
 
 ```yaml
@@ -126,6 +198,50 @@ metadata:
     janitor/expires: "2024-12-31T23:59:59Z"
 spec:
   # ... deployment spec
+```
+
+#### Priority Order
+
+The system evaluates annotations in this order:
+1. **New annotations** (`janitor/delete-if-*`) - highest priority
+2. **Legacy TTL** (`janitor/ttl`) - fallback
+3. **Legacy expires** (`janitor/expires`) - fallback  
+4. **Rules engine** - lowest priority
+
+#### Real-World Examples
+
+##### PR Environment Cleanup
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-123-feature-branch
+  annotations:
+    janitor/delete-if-idle: "2h"       # Clean up if no activity for 2 hours
+    janitor/delete-if-max-age: "3d"    # Force cleanup after 3 days
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+```
+
+##### Development Sandbox
+```yaml
+apiVersion: apps/v1  
+kind: Deployment
+metadata:
+  name: dev-sandbox
+  annotations:
+    janitor/delete-if-idle: "4h"       # Clean up if unused for 4 hours
+    janitor/delete-if-max-age: "1d"    # Daily cleanup
+    lastUsedAt: "2025-09-11T14:53:56.754Z"
+```
+
+##### Temporary Resources
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temp-config
+  annotations:
+    janitor/delete-if-max-age: "1h"    # Temporary config, 1 hour max
 ```
 
 ### Command Line Options
