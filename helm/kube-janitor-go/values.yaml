@@ -54,38 +54,53 @@ securityContext:
 
 # Janitor configuration
 janitor:
-  # Run interval (default: 30s)
+  # Run interval - how often to scan for expired resources (default: 10s)
   interval: 60s
-  
+
   # Dry run mode - don't actually delete resources
   dryRun: false
-  
+
   # Run once and exit
   runOnce: false
-  
+
   # Log level: debug, info, warn, error
   logLevel: info
-  
+
   # Maximum number of concurrent workers
-  maxWorkers: 10
-  
+  maxWorkers: 50
+
+  # Deletion delay - time between scheduling and actual deletion
+  # Set to 0 for immediate deletion (fastest), or e.g. "30s" for safety window
+  deletionDelay: 30s
+
+  # Kubernetes API rate limiting (to avoid client-side throttling)
+  # Default k8s client values are QPS=5, Burst=10 which is too slow for bulk deletions
+  kubeApiQps: 50
+  kubeApiBurst: 100
+
   # Resource types to include (empty means all)
-  includeResources: []
-  
+  includeResources:
+  - pods
+  - deployments
+  - services
+  # - volumes # Future if we add volume TTL
+
   # Resource types to exclude
   excludeResources:
     - events
     - controllerrevisions
-  
+    - endpoints
+    - endpointslices
+
   # Namespaces to include (empty means all)
   includeNamespaces: []
-  
+
   # Namespaces to exclude
   excludeNamespaces:
     - kube-system
     - kube-public
     - kube-node-lease
-  
+
   # Rules file configuration
   rulesFile:
     # Enable rules file
@@ -101,14 +116,14 @@ janitor:
           - statefulsets
         expression: "!has(object.spec.template.metadata.labels.app)"
         ttl: 7d
-      
+
       # Delete PR deployments after 4 hours
       - id: temporary-pr-deployments
         resources:
           - deployments
         expression: 'object.metadata.name.startsWith("pr-")'
         ttl: 4h
-      
+
       # Clean up completed jobs after 1 day
       - id: cleanup-completed-jobs
         resources:
@@ -124,7 +139,7 @@ metrics:
   port: 8080
   # Metrics endpoint path
   path: /metrics
-  
+
   # Prometheus ServiceMonitor
   serviceMonitor:
     # Create ServiceMonitor resource
@@ -157,16 +172,14 @@ service:
 resources:
   # Maximum resource consumption allowed
   limits:
-    # CPU limit
-    cpu: 500m
     # Memory limit
-    memory: 256Mi
+    memory: 512Mi
   # Minimum resources required
   requests:
     # CPU request
     cpu: 100m
     # Memory request
-    memory: 64Mi
+    memory: 512Mi
 
 # Horizontal Pod Autoscaler configuration
 autoscaling:
@@ -282,4 +295,22 @@ rbac:
   # Create RBAC resources
   create: true
   # Additional rules for the ClusterRole
-  additionalRules: [] 
+  additionalRules: []
+
+# Sharding configuration for horizontal scaling
+sharding:
+  # Enable sharding to distribute work across multiple instances
+  enabled: false
+  # Headless service name for peer discovery (auto-generated if not set)
+  serviceName: ""
+  # Interval for refreshing peer list
+  refreshInterval: 30s
+  # Static peers list (optional) - bypasses DNS discovery if set
+  # Use this if you want explicit control over the peer list
+  # Example for a 2-replica StatefulSet:
+  # staticPeers:
+  #   - kube-janitor-kube-janitor-go-0
+  #   - kube-janitor-kube-janitor-go-1
+  staticPeers:
+    - kube-janitor-kube-janitor-go-0
+    - kube-janitor-kube-janitor-go-1

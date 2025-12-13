@@ -98,6 +98,25 @@ Build the command-line arguments for kube-janitor-go
 {{- if .Values.janitor.rulesFile.enabled }}
 {{- $args = append $args (printf "--rules-file=%s" .Values.janitor.rulesFile.path) }}
 {{- end }}
+{{- if .Values.janitor.deletionDelay }}
+{{- $args = append $args (printf "--deletion-delay=%s" .Values.janitor.deletionDelay) }}
+{{- end }}
+{{- if .Values.sharding.enabled }}
+{{- $args = append $args "--sharding-enabled" }}
+{{- $serviceName := .Values.sharding.serviceName | default (printf "%s-headless" (include "kube-janitor-go.fullname" .)) }}
+{{- $args = append $args (printf "--sharding-service-name=%s" $serviceName) }}
+{{- $args = append $args (printf "--sharding-namespace=%s" .Release.Namespace) }}
+{{- $args = append $args (printf "--sharding-refresh-interval=%s" .Values.sharding.refreshInterval) }}
+{{- if .Values.sharding.staticPeers }}
+{{- $args = append $args (printf "--sharding-static-peers=%s" (join "," .Values.sharding.staticPeers)) }}
+{{- end }}
+{{- end }}
+{{- if .Values.janitor.kubeApiQps }}
+{{- $args = append $args (printf "--kube-api-qps=%v" .Values.janitor.kubeApiQps) }}
+{{- end }}
+{{- if .Values.janitor.kubeApiBurst }}
+{{- $args = append $args (printf "--kube-api-burst=%d" (int .Values.janitor.kubeApiBurst)) }}
+{{- end }}
 {{ toYaml $args }}
 {{- end }}
 
@@ -108,4 +127,4 @@ Common annotations
 {{- with .Values.commonAnnotations }}
 {{ toYaml . }}
 {{- end }}
-{{- end }} 
+{{- end }}

@@ -1,0 +1,22 @@
+{
+  "name": "bench",
+  "version": "1.0.0",
+  "description": "Benchmark tool for creating sandboxes",
+  "type": "module",
+  "main": "index.mts",
+  "scripts": {
+    "start": "npx tsx index.mts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.24.0",
+  "dependencies": {
+    "@blaxel/core": "^0.2.57"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.0"
+  }
+}

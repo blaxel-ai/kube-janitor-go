@@ -46,6 +46,23 @@ var (
 		},
 		[]string{"type"},
 	)
+
+	// ResourcesSkipped is a counter for resources skipped due to sharding
+	ResourcesSkipped = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kube_janitor_resources_skipped_total",
+			Help: "Total number of resources skipped due to sharding (handled by other instances)",
+		},
+		[]string{"resource", "namespace"},
+	)
+
+	// ShardingPeers is a gauge for the number of peers in the sharding cluster
+	ShardingPeers = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kube_janitor_sharding_peers",
+			Help: "Number of peer janitor instances in the sharding cluster",
+		},
+	)
 )
 
 func init() {
@@ -54,6 +71,8 @@ func init() {
 	prometheus.MustRegister(ResourcesEvaluated)
 	prometheus.MustRegister(CleanupDuration)
 	prometheus.MustRegister(Errors)
+	prometheus.MustRegister(ResourcesSkipped)
+	prometheus.MustRegister(ShardingPeers)
 }
 
 // Server represents the metrics server

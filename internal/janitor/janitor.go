@@ -10,15 +10,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaxel-ai/kube-janitor-go/internal/discovery"
 	"github.com/blaxel-ai/kube-janitor-go/internal/metrics"
 	"github.com/blaxel-ai/kube-janitor-go/internal/rules"
+	"github.com/blaxel-ai/kube-janitor-go/internal/sharding"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/discovery"
+	k8sdiscovery "k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -61,19 +64,33 @@ type Config struct {
 	ExcludeNamespaces []string
 	RulesFile         string
 	MaxWorkers        int
+	DeletionDelay     time.Duration
+	// Sharding configuration
+	ShardingEnabled         bool
+	ShardingServiceName     string
+	ShardingNamespace       string
+	ShardingRefreshInterval time.Duration
+	ShardingStaticPeers     []string
 }
 
 // Janitor is the main cleanup controller
 type Janitor struct {
 	Clientset       kubernetes.Interface
 	DynamicClient   dynamic.Interface
-	DiscoveryClient discovery.DiscoveryInterface
+	DiscoveryClient k8sdiscovery.DiscoveryInterface
 	Config          Config
 	RuleEngine      *rules.Engine
 	ResourceFilter  *ResourceFilter
 	WorkQueue       chan WorkItem
 	wg              sync.WaitGroup
 	EventRecorder   record.EventRecorder
+	// Sharding components
+	HashRing      *sharding.HashRing
+	PeerDiscovery *discovery.PeerDiscovery
+	// Pending deletions tracking to avoid re-processing
+	pendingDeletions sync.Map // map[string]time.Time - key is "namespace/name/resource"
+	// Scheduled deletions - timers for future deletions
+	scheduledDeletions sync.Map // map[string]*time.Timer - key is "namespace/name/resource"
 }
 
 // WorkItem represents an item to be processed
@@ -82,7 +99,18 @@ type WorkItem struct {
 	Namespace string
 	Name      string
 	Obj       *unstructured.Unstructured
+	// EnqueuedAt is when this item was put in the WorkQueue.
+	// Used to make deletion delay dynamic and account for queue/loop latency.
+	EnqueuedAt time.Time
 }
+
+// pendingDeletionKey generates a unique key for tracking pending deletions
+func pendingDeletionKey(resource, namespace, name string) string {
+	return fmt.Sprintf("%s/%s/%s", resource, namespace, name)
+}
+
+// Pending deletion expiry time - after this duration, allow re-processing
+const pendingDeletionExpiry = 2 * time.Minute
 
 // New creates a new Janitor instance
 func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config) (*Janitor, error) {
@@ -91,7 +119,7 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(restConfig)
+	discoveryClient, err := k8sdiscovery.NewDiscoveryClientForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery client: %w", err)
 	}
@@ -116,7 +144,7 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		Host:      os.Getenv("HOSTNAME"),
 	})
 
-	return &Janitor{
+	j := &Janitor{
 		Clientset:       clientset,
 		DynamicClient:   dynamicClient,
 		DiscoveryClient: discoveryClient,
@@ -126,12 +154,55 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		WorkQueue:       make(chan WorkItem, 1000),
 		wg:              sync.WaitGroup{},
 		EventRecorder:   recorder,
-	}, nil
+	}
+
+	// Initialize sharding if enabled
+	if config.ShardingEnabled {
+		selfName := os.Getenv("HOSTNAME")
+		if selfName == "" {
+			return nil, fmt.Errorf("HOSTNAME environment variable is required for sharding")
+		}
+
+		j.HashRing = sharding.NewHashRing(selfName, sharding.DefaultVirtualNodes)
+
+		// Create peer discovery
+		j.PeerDiscovery = discovery.NewPeerDiscovery(discovery.Config{
+			ServiceName:     config.ShardingServiceName,
+			Namespace:       config.ShardingNamespace,
+			SelfName:        selfName,
+			RefreshInterval: config.ShardingRefreshInterval,
+			StaticPeers:     config.ShardingStaticPeers,
+			OnPeersChanged: func(peers []string) {
+				j.HashRing.SetNodes(peers)
+				metrics.ShardingPeers.Set(float64(len(peers)))
+				logrus.WithFields(logrus.Fields{
+					"peers":    peers,
+					"selfName": selfName,
+				}).Info("Updated hash ring with new peers")
+			},
+		})
+
+		logrus.WithFields(logrus.Fields{
+			"selfName":        selfName,
+			"serviceName":     config.ShardingServiceName,
+			"namespace":       config.ShardingNamespace,
+			"refreshInterval": config.ShardingRefreshInterval,
+			"staticPeers":     config.ShardingStaticPeers,
+		}).Info("Sharding enabled")
+	}
+
+	return j, nil
 }
 
 // Run starts the janitor
 func (j *Janitor) Run(ctx context.Context) error {
 	logrus.Info("Starting janitor")
+
+	// Start peer discovery if sharding is enabled
+	if j.Config.ShardingEnabled && j.PeerDiscovery != nil {
+		j.PeerDiscovery.Start(ctx)
+		logrus.Info("Peer discovery started for sharding")
+	}
 
 	// Start workers
 	for i := 0; i < j.Config.MaxWorkers; i++ {
@@ -164,6 +235,8 @@ func (j *Janitor) Run(ctx context.Context) error {
 				}
 			case <-ctx.Done():
 				logrus.Info("Shutting down janitor")
+				// Cancel all scheduled deletions
+				j.cancelAllScheduledDeletions()
 				close(j.WorkQueue)
 				j.wg.Wait()
 				return nil
@@ -174,6 +247,12 @@ func (j *Janitor) Run(ctx context.Context) error {
 	close(j.WorkQueue)
 	j.wg.Wait()
 	return nil
+}
+
+// listTask represents a single resource listing task
+type listTask struct {
+	gvr       schema.GroupVersionResource
+	namespace string
 }
 
 func (j *Janitor) cleanup(ctx context.Context) error {
@@ -187,7 +266,24 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 		return fmt.Errorf("failed to discover resources: %w", err)
 	}
 
-	// Process each resource type
+	// Get namespaces once (cached for this cleanup run)
+	namespaces, err := j.getNamespaces(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to list namespaces")
+		metrics.Errors.WithLabelValues("list_namespaces").Inc()
+		namespaces = []string{}
+	}
+
+	// Filter namespaces
+	var filteredNamespaces []string
+	for _, ns := range namespaces {
+		if j.ResourceFilter.ShouldProcessNamespace(ns) {
+			filteredNamespaces = append(filteredNamespaces, ns)
+		}
+	}
+
+	// Collect all list tasks
+	var tasks []listTask
 	for _, resourceList := range resources {
 		if resourceList == nil {
 			continue
@@ -216,38 +312,50 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 				Resource: resource.Name,
 			}
 
-			// Process namespaced resources
 			if resource.Namespaced {
-				namespaces, err := j.getNamespaces(ctx)
-				if err != nil {
-					logrus.WithError(err).Error("Failed to list namespaces")
-					metrics.Errors.WithLabelValues("list_namespaces").Inc()
-					continue
-				}
-
-				for _, ns := range namespaces {
-					if !j.ResourceFilter.ShouldProcessNamespace(ns) {
-						continue
-					}
-
-					if err := j.processResources(ctx, gvr, ns); err != nil {
-						logrus.WithError(err).WithFields(logrus.Fields{
-							"resource":  resource.Name,
-							"namespace": ns,
-						}).Error("Failed to process resources")
-						metrics.Errors.WithLabelValues("process_resources").Inc()
-					}
+				for _, ns := range filteredNamespaces {
+					tasks = append(tasks, listTask{gvr: gvr, namespace: ns})
 				}
 			} else {
-				// Process cluster-scoped resources
-				if err := j.processResources(ctx, gvr, ""); err != nil {
-					logrus.WithError(err).WithField("resource", resource.Name).Error("Failed to process resources")
-					metrics.Errors.WithLabelValues("process_resources").Inc()
-				}
+				tasks = append(tasks, listTask{gvr: gvr, namespace: ""})
 			}
 		}
 	}
 
+	// Process tasks in parallel
+	var listWg sync.WaitGroup
+	// Use same number of workers as for processing, or number of tasks, whichever is smaller
+	numListWorkers := j.Config.MaxWorkers
+	if len(tasks) < numListWorkers {
+		numListWorkers = len(tasks)
+	}
+	if numListWorkers == 0 {
+		numListWorkers = 1
+	}
+
+	taskChan := make(chan listTask, len(tasks))
+	for _, task := range tasks {
+		taskChan <- task
+	}
+	close(taskChan)
+
+	for i := 0; i < numListWorkers; i++ {
+		listWg.Add(1)
+		go func() {
+			defer listWg.Done()
+			for task := range taskChan {
+				if err := j.processResources(ctx, task.gvr, task.namespace); err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"resource":  task.gvr.Resource,
+						"namespace": task.namespace,
+					}).Error("Failed to process resources")
+					metrics.Errors.WithLabelValues("process_resources").Inc()
+				}
+			}
+		}()
+	}
+
+	listWg.Wait()
 	logrus.Info("Cleanup run completed")
 	return nil
 }
@@ -265,20 +373,166 @@ func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionR
 		return err
 	}
 
+	now := time.Now()
+	nextInterval := now.Add(j.Config.Interval)
+
 	for _, item := range list.Items {
 		obj := item
+		objNamespace := obj.GetNamespace()
+		objName := obj.GetName()
+
+		// Skip resources that are already being deleted (have deletionTimestamp)
+		if obj.GetDeletionTimestamp() != nil {
+			logrus.WithFields(logrus.Fields{
+				"resource":  gvr.Resource,
+				"namespace": objNamespace,
+				"name":      objName,
+			}).Trace("Skipping resource (already terminating)")
+			continue
+		}
+
+		key := pendingDeletionKey(gvr.Resource, objNamespace, objName)
+
+		// Skip resources that are pending deletion (recently queued)
+		if timestamp, exists := j.pendingDeletions.Load(key); exists {
+			if time.Since(timestamp.(time.Time)) < pendingDeletionExpiry {
+				logrus.WithFields(logrus.Fields{
+					"resource":  gvr.Resource,
+					"namespace": objNamespace,
+					"name":      objName,
+				}).Trace("Skipping resource (pending deletion)")
+				continue
+			}
+			// Expired entry, remove it
+			j.pendingDeletions.Delete(key)
+		}
+
+		// Skip resources that already have a scheduled deletion
+		if _, exists := j.scheduledDeletions.Load(key); exists {
+			logrus.WithFields(logrus.Fields{
+				"resource":  gvr.Resource,
+				"namespace": objNamespace,
+				"name":      objName,
+			}).Trace("Skipping resource (already scheduled)")
+			continue
+		}
+
+		// Check sharding: skip resources that belong to other instances
+		if j.Config.ShardingEnabled && j.HashRing != nil {
+			if !j.HashRing.ShouldProcess(objNamespace, objName) {
+				metrics.ResourcesSkipped.WithLabelValues(gvr.Resource, objNamespace).Inc()
+				logrus.WithFields(logrus.Fields{
+					"resource":  gvr.Resource,
+					"namespace": objNamespace,
+					"name":      objName,
+				}).Trace("Skipping resource (handled by another instance)")
+				continue
+			}
+		}
+
 		// Track evaluated resources
 		metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource, namespace).Inc()
 
-		j.WorkQueue <- WorkItem{
-			Resource:  gvr,
-			Namespace: namespace,
-			Name:      obj.GetName(),
-			Obj:       &obj,
+		// Get expiration time for this resource
+		expirationTime, reason := j.getExpirationTime(&obj)
+		if expirationTime.IsZero() {
+			// No expiration set, skip
+			continue
 		}
+
+		if now.After(expirationTime) {
+			// Already expired, process immediately
+			j.WorkQueue <- WorkItem{
+				Resource:   gvr,
+				Namespace:  namespace,
+				Name:       objName,
+				Obj:        &obj,
+				EnqueuedAt: time.Now(),
+			}
+		} else if expirationTime.Before(nextInterval) {
+			// Will expire before next interval, schedule deletion
+			j.scheduleDeletion(ctx, gvr, namespace, objName, expirationTime, reason)
+		}
+		// else: will expire after next interval, will be handled in a future scan
 	}
 
 	return nil
+}
+
+// scheduleDeletion schedules a resource for deletion at a specific time
+// Only stores minimal info (name, namespace, gvr) - fetches fresh data when timer fires
+func (j *Janitor) scheduleDeletion(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, expirationTime time.Time, reason string) {
+	key := pendingDeletionKey(gvr.Resource, namespace, name)
+	delay := time.Until(expirationTime)
+
+	// Don't schedule if delay is negative or very small
+	if delay < 100*time.Millisecond {
+		// Process immediately instead - will fetch fresh data in processItem
+		j.WorkQueue <- WorkItem{
+			Resource:   gvr,
+			Namespace:  namespace,
+			Name:       name,
+			Obj:        nil, // Will be fetched in processItem
+			EnqueuedAt: time.Now(),
+		}
+		return
+	}
+
+	logger := logrus.WithFields(logrus.Fields{
+		"resource":   gvr.Resource,
+		"namespace":  namespace,
+		"name":       name,
+		"delay":      delay,
+		"expiration": expirationTime,
+		"reason":     reason,
+	})
+
+	timer := time.AfterFunc(delay, func() {
+		// Remove from scheduled deletions
+		j.scheduledDeletions.Delete(key)
+
+		// Re-check sharding ownership before queuing
+		// The hash ring may have changed since the deletion was scheduled
+		if j.Config.ShardingEnabled && j.HashRing != nil {
+			if !j.HashRing.ShouldProcess(namespace, name) {
+				logger.Debug("Scheduled deletion skipped (no longer owned by this instance)")
+				return
+			}
+		}
+
+		// Queue for deletion - Obj is nil, will be fetched fresh in processItem
+		select {
+		case j.WorkQueue <- WorkItem{
+			Resource:   gvr,
+			Namespace:  namespace,
+			Name:       name,
+			Obj:        nil,
+			EnqueuedAt: time.Now(),
+		}:
+		case <-ctx.Done():
+			logger.Debug("Context cancelled, skipping scheduled deletion")
+		}
+	})
+
+	// Store the timer
+	j.scheduledDeletions.Store(key, timer)
+	logger.Debug("Scheduled future deletion")
+}
+
+// cancelAllScheduledDeletions cancels all pending scheduled deletions
+func (j *Janitor) cancelAllScheduledDeletions() {
+	count := 0
+	j.scheduledDeletions.Range(func(key, value interface{}) bool {
+		if timer, ok := value.(*time.Timer); ok {
+			timer.Stop()
+		}
+		j.scheduledDeletions.Delete(key)
+		count++
+		return true
+	})
+	if count > 0 {
+		logrus.WithField("count", count).Info("Cancelled scheduled deletions")
+	}
 }
 
 func (j *Janitor) worker(ctx context.Context) {
@@ -304,33 +558,19 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 		"name":      item.Name,
 	})
 
-	// Check if resource should be deleted
-	shouldDelete, reason := j.shouldDelete(item.Obj)
-	if !shouldDelete {
-		return
+	// Re-check sharding ownership before processing
+	// The hash ring may have changed since the item was scheduled
+	if j.Config.ShardingEnabled && j.HashRing != nil {
+		if !j.HashRing.ShouldProcess(item.Namespace, item.Name) {
+			logger.Debug("Skipping resource (no longer owned by this instance after hash ring change)")
+			metrics.ResourcesSkipped.WithLabelValues(item.Resource.Resource, item.Namespace).Inc()
+			return
+		}
 	}
 
-	logger.WithField("reason", reason).Info("Resource marked for deletion")
+	key := pendingDeletionKey(item.Resource.Resource, item.Namespace, item.Name)
 
-	// Create a reference to the object for the event
-	ref := &corev1.ObjectReference{
-		APIVersion: item.Resource.Group + "/" + item.Resource.Version,
-		Kind:       item.Obj.GetKind(),
-		Namespace:  item.Namespace,
-		Name:       item.Name,
-		UID:        item.Obj.GetUID(),
-	}
-
-	if j.Config.DryRun {
-		logger.Info("DRY RUN: Would delete resource")
-		// Create event for dry-run
-		eventMessage := fmt.Sprintf("DRY RUN: Would delete %s %s/%s - %s",
-			item.Resource.Resource, item.Namespace, item.Name, reason)
-		j.EventRecorder.Event(ref, corev1.EventTypeNormal, "DryRunDeletion", eventMessage)
-		return
-	}
-
-	// Delete the resource
+	// Get resource interface
 	var resourceInterface dynamic.ResourceInterface
 	if item.Namespace != "" {
 		resourceInterface = j.DynamicClient.Resource(item.Resource).Namespace(item.Namespace)
@@ -338,24 +578,176 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 		resourceInterface = j.DynamicClient.Resource(item.Resource)
 	}
 
+	// If Obj is nil (scheduled deletion), fetch it fresh
+	obj := item.Obj
+	if obj == nil {
+		var err error
+		obj, err = resourceInterface.Get(ctx, item.Name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				logger.Debug("Resource no longer exists")
+				return
+			}
+			logger.WithError(err).Error("Failed to fetch resource")
+			metrics.Errors.WithLabelValues("fetch_resource").Inc()
+			return
+		}
+	}
+
+	queuedAt := item.EnqueuedAt
+	if queuedAt.IsZero() {
+		queuedAt = time.Now()
+	}
+
+	// Check if resource should be deleted
+	shouldDelete, reason := j.shouldDelete(obj)
+	if !shouldDelete {
+		return
+	}
+
+	// Use a stable reason for events when possible (avoid embedding volatile data like "age")
+	// This helps Kubernetes event de-duplication and reduces noisy repeated Events.
+	eventReason := reason
+	if expirationTime, expirationReason := j.getExpirationTime(obj); !expirationTime.IsZero() && expirationReason != "" {
+		eventReason = expirationReason
+	}
+
+	// Mark as pending deletion to prevent re-queuing
+	j.pendingDeletions.Store(key, time.Now())
+
+	// Create a reference to the object for the event
+	ref := &corev1.ObjectReference{
+		APIVersion: item.Resource.Group + "/" + item.Resource.Version,
+		Kind:       obj.GetKind(),
+		Namespace:  item.Namespace,
+		Name:       item.Name,
+		UID:        obj.GetUID(),
+	}
+
+	if j.Config.DryRun {
+		logger.Info("DRY RUN: Would delete resource")
+		// Create event for dry-run
+		eventMessage := fmt.Sprintf("DRY RUN: Would delete %s %s/%s - %s",
+			item.Resource.Resource, item.Namespace, item.Name, eventReason)
+		j.EventRecorder.Event(ref, corev1.EventTypeNormal, "DryRunDeletion", eventMessage)
+		// Remove from pending since we're not actually deleting
+		j.pendingDeletions.Delete(key)
+		return
+	}
+
+	// Store the original UID to detect resource recreation
+	originalUID := obj.GetUID()
+
+	// If deletion delay is configured, send event first and wait
+	if j.Config.DeletionDelay > 0 {
+		// Make the delay dynamic: subtract time already spent since this item was enqueued.
+		// Clamp to [0, Config.DeletionDelay] so we never wait more than configured.
+		elapsed := time.Since(queuedAt)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		remainingDelay := j.Config.DeletionDelay - elapsed
+		if remainingDelay < 0 {
+			remainingDelay = 0
+		}
+		if remainingDelay > j.Config.DeletionDelay {
+			remainingDelay = j.Config.DeletionDelay
+		}
+
+		// Send scheduled deletion event immediately
+		eventMessage := fmt.Sprintf("Scheduled for deletion in %s: %s %s/%s - %s",
+			remainingDelay, item.Resource.Resource, item.Namespace, item.Name, eventReason)
+		j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceScheduledForDeletion", eventMessage)
+
+		if remainingDelay > 0 {
+			// Wait for the remaining delay, respecting context cancellation
+			select {
+			case <-time.After(remainingDelay):
+				// Continue with deletion
+			case <-ctx.Done():
+				logger.Info("Context cancelled during deletion delay")
+				j.pendingDeletions.Delete(key)
+				return
+			}
+		}
+
+		// Re-fetch the resource to check if it still exists and still needs deletion
+		freshObj, err := resourceInterface.Get(ctx, item.Name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				logger.Info("Resource no longer exists, skipping deletion")
+				j.pendingDeletions.Delete(key)
+				return
+			}
+			logger.WithError(err).Error("Failed to re-fetch resource")
+			metrics.Errors.WithLabelValues("refetch_resource").Inc()
+			j.pendingDeletions.Delete(key)
+			return
+		}
+
+		// Check if the resource was recreated (different UID means it's a new resource)
+		if freshObj.GetUID() != originalUID {
+			logger.WithFields(logrus.Fields{
+				"originalUID": originalUID,
+				"newUID":      freshObj.GetUID(),
+			}).Info("Resource was recreated, cancelling scheduled deletion for old resource")
+			// Remove from pending deletions so the new resource can be scheduled
+			j.pendingDeletions.Delete(key)
+			// Remove from scheduled deletions so the new resource can be evaluated
+			j.scheduledDeletions.Delete(key)
+			return
+		}
+
+		// Re-check if resource should still be deleted
+		stillShouldDelete, newReason := j.shouldDelete(freshObj)
+		if !stillShouldDelete {
+			logger.Info("Resource no longer needs deletion after delay")
+			// Send cancellation event
+			cancelMessage := fmt.Sprintf("Deletion cancelled for %s %s/%s - conditions no longer met",
+				item.Resource.Resource, item.Namespace, item.Name)
+			j.EventRecorder.Event(ref, corev1.EventTypeNormal, "DeletionCancelled", cancelMessage)
+			return
+		}
+
+		// Update reason if it changed
+		if newReason != reason {
+			reason = newReason
+		}
+		// Refresh stable event reason based on the latest object state
+		eventReason = reason
+		if expirationTime, expirationReason := j.getExpirationTime(freshObj); !expirationTime.IsZero() && expirationReason != "" {
+			eventReason = expirationReason
+		}
+	}
+
+	// Delete the resource
 	err := resourceInterface.Delete(ctx, item.Name, metav1.DeleteOptions{})
 	if err != nil {
+		// Handle "not found" as success - the resource is already gone
+		if apierrors.IsNotFound(err) {
+			logger.Debug("Resource already deleted (not found)")
+			j.pendingDeletions.Delete(key)
+			return
+		}
 		logger.WithError(err).Error("Failed to delete resource")
 		metrics.Errors.WithLabelValues("delete_resource").Inc()
 		// Create event for failed deletion
 		eventMessage := fmt.Sprintf("Failed to delete %s %s/%s: %v",
 			item.Resource.Resource, item.Namespace, item.Name, err)
 		j.EventRecorder.Event(ref, corev1.EventTypeWarning, "DeletionFailed", eventMessage)
+		j.pendingDeletions.Delete(key)
 		return
 	}
 
-	logger.Info("Resource deleted")
 	metrics.ResourcesDeleted.WithLabelValues(item.Resource.Resource, item.Namespace, reason).Inc()
 
 	// Create event for successful deletion
 	eventMessage := fmt.Sprintf("Deleted %s %s/%s - %s",
-		item.Resource.Resource, item.Namespace, item.Name, reason)
+		item.Resource.Resource, item.Namespace, item.Name, eventReason)
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
+
+	// Keep in pending deletions for a bit to avoid race conditions
+	// It will be automatically cleaned up after pendingDeletionExpiry
 }
 
 // evaluateDeleteIfMaxAge checks if resource should be deleted based on max age
@@ -494,6 +886,100 @@ func findAnnotationsWithPrefix(annotations map[string]string, prefix string) map
 		}
 	}
 	return result
+}
+
+// getExpirationTime returns when a resource will expire and the reason
+// Returns zero time if no expiration is set
+func (j *Janitor) getExpirationTime(obj *unstructured.Unstructured) (time.Time, string) {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		return time.Time{}, ""
+	}
+
+	var earliestExpiration time.Time
+	var reason string
+
+	// Check legacy TTL annotation (most common case)
+	if ttl, ok := annotations[annotationTTL]; ok {
+		duration, err := ParseExtendedDuration(ttl)
+		if err == nil {
+			expiration := obj.GetCreationTimestamp().Time.Add(duration)
+			if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+				earliestExpiration = expiration
+				reason = fmt.Sprintf("Legacy TTL (ttl: %s)", ttl)
+			}
+		}
+	}
+
+	// Check delete-if-max-age annotations
+	maxAgeAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfMaxAge)
+	for annotationKey, annotationValue := range maxAgeAnnotations {
+		duration, err := ParseExtendedDuration(annotationValue)
+		if err == nil {
+			expiration := obj.GetCreationTimestamp().Time.Add(duration)
+			if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+				earliestExpiration = expiration
+				reason = fmt.Sprintf("Delete max-age policy (annotation: %s)", annotationKey)
+			}
+		}
+	}
+
+	// Check delete-if-date annotations
+	dateAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfDate)
+	for annotationKey, annotationValue := range dateAnnotations {
+		expiration, err := parseExpirationTime(annotationValue)
+		if err == nil {
+			if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+				earliestExpiration = expiration
+				reason = fmt.Sprintf("Delete date policy (annotation: %s)", annotationKey)
+			}
+		}
+	}
+
+	// Check legacy expiration annotation
+	if expires, ok := annotations[annotationExpires]; ok {
+		expiration, err := parseExpirationTime(expires)
+		if err == nil {
+			if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+				earliestExpiration = expiration
+				reason = fmt.Sprintf("Legacy expiration (%s)", expires)
+			}
+		}
+	}
+
+	// Check delete-if-idle annotations
+	idleAnnotations := findAnnotationsWithPrefix(annotations, annotationDeleteIfIdle)
+	if len(idleAnnotations) > 0 {
+		// Get lastUsedAt timestamp
+		if lastUsedAtStr, exists := annotations[annotationLastUsedAt]; exists {
+			lastUsedAt, err := time.Parse(time.RFC3339, lastUsedAtStr)
+			if err == nil {
+				for annotationKey, annotationValue := range idleAnnotations {
+					duration, err := ParseExtendedDuration(annotationValue)
+					if err == nil {
+						expiration := lastUsedAt.Add(duration)
+						if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+							earliestExpiration = expiration
+							reason = fmt.Sprintf("Delete idle policy (annotation: %s)", annotationKey)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Check rules
+	if j.RuleEngine != nil {
+		if rule, ttl := j.RuleEngine.Evaluate(obj); rule != nil {
+			expiration := obj.GetCreationTimestamp().Time.Add(ttl)
+			if earliestExpiration.IsZero() || expiration.Before(earliestExpiration) {
+				earliestExpiration = expiration
+				reason = fmt.Sprintf("Rule '%s' (ttl: %s)", rule.ID, ttl)
+			}
+		}
+	}
+
+	return earliestExpiration, reason
 }
 
 func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {

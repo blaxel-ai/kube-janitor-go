@@ -215,12 +215,13 @@ func TestShouldDelete(t *testing.T) {
 					"metadata": map[string]interface{}{
 						"name": "test-pod",
 						"annotations": map[string]interface{}{
-							"janitor/delete-if-date-0": "2025-09-15T19:19:15.178507Z",
+							// Use a relative future time to keep this test stable over time.
+							"janitor/delete-if-date-0": now.Add(24 * time.Hour).Format(time.RFC3339),
 						},
 					},
 				},
 			},
-			wantDelete: false, // This should be false since the date is in the future (assuming test runs before this time)
+			wantDelete: false, // Date is in the future
 		},
 		{
 			name: "Delete-if-date-0 with past date",

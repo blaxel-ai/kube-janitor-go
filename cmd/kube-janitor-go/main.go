@@ -27,7 +27,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "kube-janitor-go",
 	Short: "Clean up Kubernetes resources based on TTL annotations and rules",
-	Long: `kube-janitor-go is a Kubernetes controller that automatically cleans up 
+	Long: `kube-janitor-go is a Kubernetes controller that automatically cleans up
 resources based on TTL (time to live) annotations or custom rules.`,
 	RunE: run,
 }
@@ -46,7 +46,19 @@ func init() {
 	rootCmd.PersistentFlags().Int("metrics-port", 8080, "Port for Prometheus metrics")
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.PersistentFlags().Int("max-workers", 10, "Maximum number of concurrent workers")
+	rootCmd.PersistentFlags().Duration("deletion-delay", 30*time.Second, "Delay between scheduling and actual deletion")
 	rootCmd.PersistentFlags().String("kubeconfig", "", "Path to kubeconfig file (optional)")
+
+	// Sharding flags
+	rootCmd.PersistentFlags().Bool("sharding-enabled", false, "Enable sharding to distribute work across multiple instances")
+	rootCmd.PersistentFlags().String("sharding-service-name", "kube-janitor", "Headless service name for peer discovery")
+	rootCmd.PersistentFlags().String("sharding-namespace", "", "Namespace for peer discovery (defaults to current namespace)")
+	rootCmd.PersistentFlags().Duration("sharding-refresh-interval", 30*time.Second, "Interval for refreshing peer list")
+	rootCmd.PersistentFlags().StringSlice("sharding-static-peers", []string{}, "Static list of peer names (bypasses DNS discovery if set)")
+
+	// Kubernetes client rate limiting
+	rootCmd.PersistentFlags().Float32("kube-api-qps", 50, "Kubernetes API QPS limit")
+	rootCmd.PersistentFlags().Int("kube-api-burst", 100, "Kubernetes API burst limit")
 
 	// Bind flags to viper
 	if err := viper.BindPFlags(rootCmd.PersistentFlags()); err != nil {
@@ -99,6 +111,15 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to get kubernetes config: %w", err)
 	}
 
+	// Configure client rate limiting to avoid throttling
+	config.QPS = float32(viper.GetFloat64("kube-api-qps"))
+	config.Burst = viper.GetInt("kube-api-burst")
+
+	logrus.WithFields(logrus.Fields{
+		"qps":   config.QPS,
+		"burst": config.Burst,
+	}).Info("Kubernetes client rate limiting configured")
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes client: %w", err)
@@ -114,15 +135,21 @@ func run(_ *cobra.Command, _ []string) error {
 
 	// Create and run janitor
 	janitorConfig := janitor.Config{
-		DryRun:            viper.GetBool("dry-run"),
-		Interval:          viper.GetDuration("interval"),
-		Once:              viper.GetBool("once"),
-		IncludeResources:  viper.GetStringSlice("include-resources"),
-		ExcludeResources:  viper.GetStringSlice("exclude-resources"),
-		IncludeNamespaces: viper.GetStringSlice("include-namespaces"),
-		ExcludeNamespaces: viper.GetStringSlice("exclude-namespaces"),
-		RulesFile:         viper.GetString("rules-file"),
-		MaxWorkers:        viper.GetInt("max-workers"),
+		DryRun:                  viper.GetBool("dry-run"),
+		Interval:                viper.GetDuration("interval"),
+		Once:                    viper.GetBool("once"),
+		IncludeResources:        viper.GetStringSlice("include-resources"),
+		ExcludeResources:        viper.GetStringSlice("exclude-resources"),
+		IncludeNamespaces:       viper.GetStringSlice("include-namespaces"),
+		ExcludeNamespaces:       viper.GetStringSlice("exclude-namespaces"),
+		RulesFile:               viper.GetString("rules-file"),
+		MaxWorkers:              viper.GetInt("max-workers"),
+		DeletionDelay:           viper.GetDuration("deletion-delay"),
+		ShardingEnabled:         viper.GetBool("sharding-enabled"),
+		ShardingServiceName:     viper.GetString("sharding-service-name"),
+		ShardingNamespace:       viper.GetString("sharding-namespace"),
+		ShardingRefreshInterval: viper.GetDuration("sharding-refresh-interval"),
+		ShardingStaticPeers:     viper.GetStringSlice("sharding-static-peers"),
 	}
 
 	j, err := janitor.New(clientset, config, janitorConfig)

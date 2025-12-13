@@ -46,4 +46,5 @@ debug
 __debug_bin
 
 # Kubernetes manifests for testing
-test-manifests/ 
+test-manifests/
+node_modules

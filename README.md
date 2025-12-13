@@ -143,14 +143,14 @@ metadata:
     # Multiple max-age rules
     janitor/delete-if-max-age: "7d"      # Rule 1: Delete after 7 days
     janitor/delete-if-max-age-2: "30d"   # Rule 2: Backup rule after 30 days
-    
-    # Multiple idle rules  
+
+    # Multiple idle rules
     janitor/delete-if-idle: "1h"         # Rule 1: Delete if idle for 1 hour
     janitor/delete-if-idle-2: "24h"      # Rule 2: Backup rule if idle for 24 hours
-    
+
     # Mixed policy types
     janitor/delete-if-max-age-3: "3d"    # Also delete after 3 days maximum
-    
+
     lastUsedAt: "2025-09-11T14:53:56.754Z"
 spec:
   # ... deployment spec
@@ -163,7 +163,7 @@ spec:
 The system supports extended duration formats:
 
 - **Standard Go durations**: `1h30m`, `2h`, `30m`
-- **Days**: `7d`, `1.5d`  
+- **Days**: `7d`, `1.5d`
 - **Weeks**: `2w`, `0.5w`
 - **Months**: `1month`, `3months` (approximated as 30 days)
 - **Combined**: `1month2w3d12h30m`
@@ -205,7 +205,7 @@ spec:
 The system evaluates annotations in this order:
 1. **New annotations** (`janitor/delete-if-*`) - highest priority
 2. **Legacy TTL** (`janitor/ttl`) - fallback
-3. **Legacy expires** (`janitor/expires`) - fallback  
+3. **Legacy expires** (`janitor/expires`) - fallback
 4. **Rules engine** - lowest priority
 
 #### Real-World Examples
@@ -224,7 +224,7 @@ metadata:
 
 ##### Development Sandbox
 ```yaml
-apiVersion: apps/v1  
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dev-sandbox
@@ -352,6 +352,7 @@ kube-janitor-go exposes Prometheus metrics on the `/metrics` endpoint:
 kube-janitor-go creates Kubernetes events to provide an audit trail of its actions. Events are created for:
 
 - **Resource Deletion**: When a resource is successfully deleted
+- **Resource Scheduled for deletion**: When a resource is scheduled for deletion
 - **Deletion Failure**: When a resource deletion fails
 - **Dry Run**: When a resource would be deleted (in dry-run mode)
 
@@ -451,4 +452,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## Acknowledgments
 
 - Inspired by the original [kube-janitor](https://codeberg.org/hjacobs/kube-janitor) project by Henning Jacobs
-- Built with [client-go](https://github.com/kubernetes/client-go) and [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) 
+- Built with [client-go](https://github.com/kubernetes/client-go) and [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)

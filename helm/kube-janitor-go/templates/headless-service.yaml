@@ -1,0 +1,23 @@
+{{- if .Values.sharding.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kube-janitor-go.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-janitor-go.labels" . | nindent 4 }}
+  annotations:
+    {{- include "kube-janitor-go.annotations" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "kube-janitor-go.selectorLabels" . | nindent 4 }}
+{{- end }}
+

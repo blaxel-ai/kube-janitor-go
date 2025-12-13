@@ -1,0 +1,17 @@
+apiVersion: blaxel.ai/v1alpha1
+kind: Sandbox
+metadata:
+  name: sbx-janitor-test
+  displayName: Sandbox for Janitor Test
+spec:
+  enabled: true
+  runtime:
+    image: blaxel/base-image:latest
+    ports:
+      - name: sandbox-api
+        target: 8080
+        protocol: HTTP
+    generation: mk3
+    memory: 4096
+    ttl: 1m
+  region: eu-dub-1

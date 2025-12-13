@@ -1,6 +1,6 @@
-{{- if not .Values.sharding.enabled }}
+{{- if .Values.sharding.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "kube-janitor-go.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -9,6 +9,7 @@ metadata:
   annotations:
     {{- include "kube-janitor-go.annotations" . | nindent 4 }}
 spec:
+  serviceName: {{ include "kube-janitor-go.fullname" . }}-headless
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -46,6 +47,10 @@ spec:
           args:
             {{- include "kube-janitor-go.args" . | nindent 12 }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- with .Values.extraEnvVars }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -98,3 +103,4 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
+
