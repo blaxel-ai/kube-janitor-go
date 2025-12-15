@@ -67,7 +67,7 @@ janitor:
   logLevel: info
 
   # Maximum number of concurrent workers
-  maxWorkers: 50
+  maxWorkers: 5
 
   # Deletion delay - time between scheduling and actual deletion
   # Set to 0 for immediate deletion (fastest), or e.g. "30s" for safety window
