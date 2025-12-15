@@ -23,10 +23,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sdiscovery "k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -56,7 +58,9 @@ const (
 // Config holds the janitor configuration
 type Config struct {
 	DryRun            bool
-	Interval          time.Duration
+	Interval          time.Duration // Deprecated: use ReconcileInterval instead
+	ReconcileInterval time.Duration // Interval for full reconciliation (default 10m)
+	CheckInterval     time.Duration // Interval for expiration checks (default 1s)
 	Once              bool
 	IncludeResources  []string
 	ExcludeResources  []string
@@ -91,6 +95,12 @@ type Janitor struct {
 	pendingDeletions sync.Map // map[string]time.Time - key is "namespace/name/resource"
 	// Scheduled deletions - timers for future deletions
 	scheduledDeletions sync.Map // map[string]*time.Timer - key is "namespace/name/resource"
+	// Informer-based components
+	expirationStore   *ExpirationStore
+	informerFactory   dynamicinformer.DynamicSharedInformerFactory
+	informerStopCh    chan struct{}
+	watchedResources  []schema.GroupVersionResource // Resources being watched by informers
+	watchedResourceMu sync.RWMutex
 }
 
 // WorkItem represents an item to be processed
@@ -144,16 +154,36 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		Host:      os.Getenv("HOSTNAME"),
 	})
 
+	// Set default intervals if not provided
+	if config.ReconcileInterval == 0 {
+		if config.Interval > 0 {
+			// Use legacy Interval as fallback
+			config.ReconcileInterval = config.Interval
+		} else {
+			config.ReconcileInterval = 10 * time.Minute
+		}
+	}
+	if config.CheckInterval == 0 {
+		config.CheckInterval = 1 * time.Second
+	}
+
+	// Create informer factory with resync period matching reconcile interval
+	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, config.ReconcileInterval)
+
 	j := &Janitor{
-		Clientset:       clientset,
-		DynamicClient:   dynamicClient,
-		DiscoveryClient: discoveryClient,
-		Config:          config,
-		RuleEngine:      ruleEngine,
-		ResourceFilter:  resourceFilter,
-		WorkQueue:       make(chan WorkItem, 1000),
-		wg:              sync.WaitGroup{},
-		EventRecorder:   recorder,
+		Clientset:        clientset,
+		DynamicClient:    dynamicClient,
+		DiscoveryClient:  discoveryClient,
+		Config:           config,
+		RuleEngine:       ruleEngine,
+		ResourceFilter:   resourceFilter,
+		WorkQueue:        make(chan WorkItem, 1000),
+		wg:               sync.WaitGroup{},
+		EventRecorder:    recorder,
+		expirationStore:  NewExpirationStore(),
+		informerFactory:  informerFactory,
+		informerStopCh:   make(chan struct{}),
+		watchedResources: make([]schema.GroupVersionResource, 0),
 	}
 
 	// Initialize sharding if enabled
@@ -212,36 +242,48 @@ func (j *Janitor) Run(ctx context.Context) error {
 
 	// Run cleanup loop
 	if j.Config.Once {
-		if err := j.cleanup(ctx); err != nil {
+		// In "once" mode, just do a full reconciliation and exit
+		if err := j.reconcile(ctx); err != nil {
 			metrics.Errors.WithLabelValues("cleanup").Inc()
 			return err
 		}
 	} else {
-		ticker := time.NewTicker(j.Config.Interval)
-		defer ticker.Stop()
-
-		// Run immediately
-		if err := j.cleanup(ctx); err != nil {
-			logrus.WithError(err).Error("Cleanup failed")
-			metrics.Errors.WithLabelValues("cleanup").Inc()
+		// Set up informers for all allowed resource types
+		if err := j.setupInformers(ctx); err != nil {
+			logrus.WithError(err).Error("Failed to setup informers")
+			metrics.Errors.WithLabelValues("setup_informers").Inc()
+			return err
 		}
 
-		for {
-			select {
-			case <-ticker.C:
-				if err := j.cleanup(ctx); err != nil {
-					logrus.WithError(err).Error("Cleanup failed")
-					metrics.Errors.WithLabelValues("cleanup").Inc()
-				}
-			case <-ctx.Done():
-				logrus.Info("Shutting down janitor")
-				// Cancel all scheduled deletions
-				j.cancelAllScheduledDeletions()
-				close(j.WorkQueue)
-				j.wg.Wait()
-				return nil
-			}
-		}
+		// Start informers
+		j.informerFactory.Start(j.informerStopCh)
+
+		// Wait for informer caches to sync
+		logrus.Info("Waiting for informer caches to sync...")
+		j.informerFactory.WaitForCacheSync(j.informerStopCh)
+		logrus.Info("Informer caches synced")
+
+		// Start the expiration check loop (1 second)
+		j.wg.Add(1)
+		go j.runExpirationCheckLoop(ctx)
+
+		// Start the reconciliation loop (10 minutes)
+		j.wg.Add(1)
+		go j.runReconcileLoop(ctx)
+
+		// Wait for shutdown
+		<-ctx.Done()
+		logrus.Info("Shutting down janitor")
+
+		// Stop informers
+		close(j.informerStopCh)
+
+		// Cancel all scheduled deletions
+		j.cancelAllScheduledDeletions()
+
+		close(j.WorkQueue)
+		j.wg.Wait()
+		return nil
 	}
 
 	close(j.WorkQueue)
@@ -249,16 +291,9 @@ func (j *Janitor) Run(ctx context.Context) error {
 	return nil
 }
 
-// listTask represents a single resource listing task
-type listTask struct {
-	gvr       schema.GroupVersionResource
-	namespace string
-}
-
-func (j *Janitor) cleanup(ctx context.Context) error {
-	logrus.Debug("Starting cleanup run")
-	timer := prometheus.NewTimer(metrics.CleanupDuration)
-	defer timer.ObserveDuration()
+// setupInformers discovers all allowed resource types and sets up informers for them
+func (j *Janitor) setupInformers(ctx context.Context) error {
+	logrus.Debug("Setting up informers for allowed resource types")
 
 	// Get all resource types
 	resources, err := j.DiscoveryClient.ServerPreferredResources()
@@ -266,7 +301,349 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 		return fmt.Errorf("failed to discover resources: %w", err)
 	}
 
-	// Get namespaces once (cached for this cleanup run)
+	var watchedGVRs []schema.GroupVersionResource
+
+	for _, resourceList := range resources {
+		if resourceList == nil {
+			continue
+		}
+
+		gv, err := schema.ParseGroupVersion(resourceList.GroupVersion)
+		if err != nil {
+			logrus.WithError(err).Warnf("Failed to parse group version %s", resourceList.GroupVersion)
+			continue
+		}
+
+		for _, resource := range resourceList.APIResources {
+			// Skip resources that can't be listed, watched, or deleted
+			if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "watch") || !contains(resource.Verbs, "delete") {
+				continue
+			}
+
+			// Apply resource filter
+			if !j.ResourceFilter.ShouldProcessResource(resource.Name) {
+				continue
+			}
+
+			gvr := schema.GroupVersionResource{
+				Group:    gv.Group,
+				Version:  gv.Version,
+				Resource: resource.Name,
+			}
+
+			// Set up informer for this resource type
+			informer := j.informerFactory.ForResource(gvr)
+			_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+				AddFunc:    j.createAddHandler(gvr),
+				UpdateFunc: j.createUpdateHandler(gvr),
+				DeleteFunc: j.createDeleteHandler(gvr),
+			})
+			if err != nil {
+				logrus.WithError(err).WithField("resource", gvr.Resource).Warn("Failed to add event handler")
+				continue
+			}
+
+			watchedGVRs = append(watchedGVRs, gvr)
+			logrus.WithField("resource", gvr.Resource).Debug("Set up informer")
+		}
+	}
+
+	j.watchedResourceMu.Lock()
+	j.watchedResources = watchedGVRs
+	j.watchedResourceMu.Unlock()
+
+	logrus.WithField("count", len(watchedGVRs)).Info("Informers set up for resource types")
+	return nil
+}
+
+// createAddHandler creates an event handler for Add events
+func (j *Janitor) createAddHandler(gvr schema.GroupVersionResource) func(obj interface{}) {
+	return func(obj interface{}) {
+		u, ok := obj.(*unstructured.Unstructured)
+		if !ok {
+			return
+		}
+
+		// Check namespace filter
+		if u.GetNamespace() != "" && !j.ResourceFilter.ShouldProcessNamespace(u.GetNamespace()) {
+			return
+		}
+
+		// Check sharding
+		if j.Config.ShardingEnabled && j.HashRing != nil {
+			if !j.HashRing.ShouldProcess(u.GetNamespace(), u.GetName()) {
+				return
+			}
+		}
+
+		// Check if resource has expiration
+		expirationTime, reason := j.getExpirationTime(u)
+		if expirationTime.IsZero() {
+			return
+		}
+
+		// Add to store
+		j.expirationStore.Add(gvr, u.GetNamespace(), u.GetName(), expirationTime, reason)
+
+		logrus.WithFields(logrus.Fields{
+			"resource":   gvr.Resource,
+			"namespace":  u.GetNamespace(),
+			"name":       u.GetName(),
+			"expiration": expirationTime,
+			"reason":     reason,
+		}).Debug("Added resource to expiration store")
+	}
+}
+
+// createUpdateHandler creates an event handler for Update events
+func (j *Janitor) createUpdateHandler(gvr schema.GroupVersionResource) func(oldObj, newObj interface{}) {
+	return func(oldObj, newObj interface{}) {
+		u, ok := newObj.(*unstructured.Unstructured)
+		if !ok {
+			return
+		}
+
+		// Check namespace filter
+		if u.GetNamespace() != "" && !j.ResourceFilter.ShouldProcessNamespace(u.GetNamespace()) {
+			// Remove from store if it was there
+			j.expirationStore.Remove(gvr, u.GetNamespace(), u.GetName())
+			return
+		}
+
+		// Check sharding
+		if j.Config.ShardingEnabled && j.HashRing != nil {
+			if !j.HashRing.ShouldProcess(u.GetNamespace(), u.GetName()) {
+				// Remove from store if sharding changed
+				j.expirationStore.Remove(gvr, u.GetNamespace(), u.GetName())
+				return
+			}
+		}
+
+		// Check if resource has expiration
+		expirationTime, reason := j.getExpirationTime(u)
+		if expirationTime.IsZero() {
+			// Remove from store if TTL annotation was removed
+			j.expirationStore.Remove(gvr, u.GetNamespace(), u.GetName())
+			logrus.WithFields(logrus.Fields{
+				"resource":  gvr.Resource,
+				"namespace": u.GetNamespace(),
+				"name":      u.GetName(),
+			}).Debug("Removed resource from expiration store (no TTL)")
+			return
+		}
+
+		// Add/update in store
+		j.expirationStore.Add(gvr, u.GetNamespace(), u.GetName(), expirationTime, reason)
+
+		logrus.WithFields(logrus.Fields{
+			"resource":   gvr.Resource,
+			"namespace":  u.GetNamespace(),
+			"name":       u.GetName(),
+			"expiration": expirationTime,
+			"reason":     reason,
+		}).Debug("Updated resource in expiration store")
+	}
+}
+
+// createDeleteHandler creates an event handler for Delete events
+func (j *Janitor) createDeleteHandler(gvr schema.GroupVersionResource) func(obj interface{}) {
+	return func(obj interface{}) {
+		var u *unstructured.Unstructured
+		var ok bool
+
+		// Handle DeletedFinalStateUnknown
+		if tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown); isTombstone {
+			u, ok = tombstone.Obj.(*unstructured.Unstructured)
+			if !ok {
+				return
+			}
+		} else {
+			u, ok = obj.(*unstructured.Unstructured)
+			if !ok {
+				return
+			}
+		}
+
+		// Remove from store
+		j.expirationStore.Remove(gvr, u.GetNamespace(), u.GetName())
+
+		// Also clean up pending deletions
+		key := pendingDeletionKey(gvr.Resource, u.GetNamespace(), u.GetName())
+		j.pendingDeletions.Delete(key)
+		if timer, exists := j.scheduledDeletions.LoadAndDelete(key); exists {
+			if t, ok := timer.(*time.Timer); ok {
+				t.Stop()
+			}
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"resource":  gvr.Resource,
+			"namespace": u.GetNamespace(),
+			"name":      u.GetName(),
+		}).Debug("Removed resource from expiration store (deleted)")
+	}
+}
+
+// runExpirationCheckLoop runs the expiration check loop every CheckInterval
+func (j *Janitor) runExpirationCheckLoop(ctx context.Context) {
+	defer j.wg.Done()
+
+	ticker := time.NewTicker(j.Config.CheckInterval)
+	defer ticker.Stop()
+
+	logrus.WithField("interval", j.Config.CheckInterval).Info("Starting expiration check loop")
+
+	for {
+		select {
+		case <-ticker.C:
+			j.checkExpirations()
+		case <-ctx.Done():
+			logrus.Info("Expiration check loop stopped")
+			return
+		}
+	}
+}
+
+// checkExpirations checks the store for expired resources and queues them for deletion
+func (j *Janitor) checkExpirations() {
+	expired := j.expirationStore.GetExpired()
+	if len(expired) == 0 {
+		return
+	}
+
+	logrus.WithField("count", len(expired)).Debug("Found expired resources")
+
+	for _, entry := range expired {
+		key := pendingDeletionKey(entry.GVR.Resource, entry.Namespace, entry.Name)
+
+		// Skip if already pending deletion
+		if timestamp, exists := j.pendingDeletions.Load(key); exists {
+			if time.Since(timestamp.(time.Time)) < pendingDeletionExpiry {
+				continue
+			}
+			j.pendingDeletions.Delete(key)
+		}
+
+		// Skip if already scheduled
+		if _, exists := j.scheduledDeletions.Load(key); exists {
+			continue
+		}
+
+		// Re-check sharding ownership
+		if j.Config.ShardingEnabled && j.HashRing != nil {
+			if !j.HashRing.ShouldProcess(entry.Namespace, entry.Name) {
+				// Remove from store - not our responsibility
+				j.expirationStore.Remove(entry.GVR, entry.Namespace, entry.Name)
+				continue
+			}
+		}
+
+		// Mark as pending and queue for deletion
+		j.pendingDeletions.Store(key, time.Now())
+
+		// Remove from store since we're processing it
+		j.expirationStore.Remove(entry.GVR, entry.Namespace, entry.Name)
+
+		// Queue for deletion
+		select {
+		case j.WorkQueue <- WorkItem{
+			Resource:   entry.GVR,
+			Namespace:  entry.Namespace,
+			Name:       entry.Name,
+			Obj:        nil, // Will be fetched fresh in processItem
+			EnqueuedAt: time.Now(),
+		}:
+			logrus.WithFields(logrus.Fields{
+				"resource":  entry.GVR.Resource,
+				"namespace": entry.Namespace,
+				"name":      entry.Name,
+				"reason":    entry.Reason,
+			}).Debug("Queued expired resource for deletion")
+		default:
+			// Queue is full, will be retried on next check
+			j.pendingDeletions.Delete(key)
+			logrus.WithFields(logrus.Fields{
+				"resource":  entry.GVR.Resource,
+				"namespace": entry.Namespace,
+				"name":      entry.Name,
+			}).Warn("Work queue full, will retry")
+		}
+	}
+}
+
+// runReconcileLoop runs the full reconciliation loop every ReconcileInterval
+func (j *Janitor) runReconcileLoop(ctx context.Context) {
+	defer j.wg.Done()
+
+	ticker := time.NewTicker(j.Config.ReconcileInterval)
+	defer ticker.Stop()
+
+	logrus.WithField("interval", j.Config.ReconcileInterval).Info("Starting reconciliation loop")
+
+	// Run immediately on startup
+	if err := j.reconcile(ctx); err != nil {
+		logrus.WithError(err).Error("Reconciliation failed")
+		metrics.Errors.WithLabelValues("reconcile").Inc()
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := j.reconcile(ctx); err != nil {
+				logrus.WithError(err).Error("Reconciliation failed")
+				metrics.Errors.WithLabelValues("reconcile").Inc()
+			}
+		case <-ctx.Done():
+			logrus.Info("Reconciliation loop stopped")
+			return
+		}
+	}
+}
+
+// reconcile performs a full reconciliation of the expiration store with the cluster state
+func (j *Janitor) reconcile(ctx context.Context) error {
+	logrus.Debug("Starting reconciliation")
+	timer := prometheus.NewTimer(metrics.CleanupDuration)
+	defer timer.ObserveDuration()
+
+	j.watchedResourceMu.RLock()
+	gvrs := j.watchedResources
+	j.watchedResourceMu.RUnlock()
+
+	// If informers haven't been set up yet (e.g., in "once" mode), discover resources
+	if len(gvrs) == 0 {
+		resources, err := j.DiscoveryClient.ServerPreferredResources()
+		if err != nil {
+			return fmt.Errorf("failed to discover resources: %w", err)
+		}
+
+		for _, resourceList := range resources {
+			if resourceList == nil {
+				continue
+			}
+
+			gv, err := schema.ParseGroupVersion(resourceList.GroupVersion)
+			if err != nil {
+				continue
+			}
+
+			for _, resource := range resourceList.APIResources {
+				if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "delete") {
+					continue
+				}
+				if !j.ResourceFilter.ShouldProcessResource(resource.Name) {
+					continue
+				}
+				gvrs = append(gvrs, schema.GroupVersionResource{
+					Group:    gv.Group,
+					Version:  gv.Version,
+					Resource: resource.Name,
+				})
+			}
+		}
+	}
+
+	// Get namespaces
 	namespaces, err := j.getNamespaces(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to list namespaces")
@@ -282,85 +659,37 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 		}
 	}
 
-	// Collect all list tasks
-	var tasks []listTask
-	for _, resourceList := range resources {
-		if resourceList == nil {
-			continue
+	// Process each resource type
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, j.Config.MaxWorkers)
+
+	for _, gvr := range gvrs {
+		for _, ns := range filteredNamespaces {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(gvr schema.GroupVersionResource, namespace string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				j.reconcileResourceNamespace(ctx, gvr, namespace)
+			}(gvr, ns)
 		}
-
-		gv, err := schema.ParseGroupVersion(resourceList.GroupVersion)
-		if err != nil {
-			logrus.WithError(err).Warnf("Failed to parse group version %s", resourceList.GroupVersion)
-			continue
-		}
-
-		for _, resource := range resourceList.APIResources {
-			// Skip resources that can't be listed or deleted
-			if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "delete") {
-				continue
-			}
-
-			// Apply resource filter
-			if !j.ResourceFilter.ShouldProcessResource(resource.Name) {
-				continue
-			}
-
-			gvr := schema.GroupVersionResource{
-				Group:    gv.Group,
-				Version:  gv.Version,
-				Resource: resource.Name,
-			}
-
-			if resource.Namespaced {
-				for _, ns := range filteredNamespaces {
-					tasks = append(tasks, listTask{gvr: gvr, namespace: ns})
-				}
-			} else {
-				tasks = append(tasks, listTask{gvr: gvr, namespace: ""})
-			}
-		}
+		// Also handle cluster-scoped resources
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(gvr schema.GroupVersionResource) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			j.reconcileResourceNamespace(ctx, gvr, "")
+		}(gvr)
 	}
 
-	// Process tasks in parallel
-	var listWg sync.WaitGroup
-	// Use same number of workers as for processing, or number of tasks, whichever is smaller
-	numListWorkers := j.Config.MaxWorkers
-	if len(tasks) < numListWorkers {
-		numListWorkers = len(tasks)
-	}
-	if numListWorkers == 0 {
-		numListWorkers = 1
-	}
-
-	taskChan := make(chan listTask, len(tasks))
-	for _, task := range tasks {
-		taskChan <- task
-	}
-	close(taskChan)
-
-	for i := 0; i < numListWorkers; i++ {
-		listWg.Add(1)
-		go func() {
-			defer listWg.Done()
-			for task := range taskChan {
-				if err := j.processResources(ctx, task.gvr, task.namespace); err != nil {
-					logrus.WithError(err).WithFields(logrus.Fields{
-						"resource":  task.gvr.Resource,
-						"namespace": task.namespace,
-					}).Error("Failed to process resources")
-					metrics.Errors.WithLabelValues("process_resources").Inc()
-				}
-			}
-		}()
-	}
-
-	listWg.Wait()
-	logrus.Info("Cleanup run completed")
+	wg.Wait()
+	logrus.Info("Reconciliation completed")
 	return nil
 }
 
-func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionResource, namespace string) error {
+// reconcileResourceNamespace reconciles a single resource type in a namespace
+func (j *Janitor) reconcileResourceNamespace(ctx context.Context, gvr schema.GroupVersionResource, namespace string) {
 	var resourceInterface dynamic.ResourceInterface
 	if namespace != "" {
 		resourceInterface = j.DynamicClient.Resource(gvr).Namespace(namespace)
@@ -370,62 +699,28 @@ func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionR
 
 	list, err := resourceInterface.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return err
+		// Silently skip - might be a cluster-scoped resource in a namespace context
+		return
 	}
-
-	now := time.Now()
-	nextInterval := now.Add(j.Config.Interval)
 
 	for _, item := range list.Items {
 		obj := item
 		objNamespace := obj.GetNamespace()
 		objName := obj.GetName()
 
-		// Skip resources that are already being deleted (have deletionTimestamp)
+		// Skip resources that are already being deleted
 		if obj.GetDeletionTimestamp() != nil {
-			logrus.WithFields(logrus.Fields{
-				"resource":  gvr.Resource,
-				"namespace": objNamespace,
-				"name":      objName,
-			}).Trace("Skipping resource (already terminating)")
 			continue
 		}
 
-		key := pendingDeletionKey(gvr.Resource, objNamespace, objName)
-
-		// Skip resources that are pending deletion (recently queued)
-		if timestamp, exists := j.pendingDeletions.Load(key); exists {
-			if time.Since(timestamp.(time.Time)) < pendingDeletionExpiry {
-				logrus.WithFields(logrus.Fields{
-					"resource":  gvr.Resource,
-					"namespace": objNamespace,
-					"name":      objName,
-				}).Trace("Skipping resource (pending deletion)")
-				continue
-			}
-			// Expired entry, remove it
-			j.pendingDeletions.Delete(key)
-		}
-
-		// Skip resources that already have a scheduled deletion
-		if _, exists := j.scheduledDeletions.Load(key); exists {
-			logrus.WithFields(logrus.Fields{
-				"resource":  gvr.Resource,
-				"namespace": objNamespace,
-				"name":      objName,
-			}).Trace("Skipping resource (already scheduled)")
+		// Check namespace filter
+		if objNamespace != "" && !j.ResourceFilter.ShouldProcessNamespace(objNamespace) {
 			continue
 		}
 
-		// Check sharding: skip resources that belong to other instances
+		// Check sharding
 		if j.Config.ShardingEnabled && j.HashRing != nil {
 			if !j.HashRing.ShouldProcess(objNamespace, objName) {
-				metrics.ResourcesSkipped.WithLabelValues(gvr.Resource, objNamespace).Inc()
-				logrus.WithFields(logrus.Fields{
-					"resource":  gvr.Resource,
-					"namespace": objNamespace,
-					"name":      objName,
-				}).Trace("Skipping resource (handled by another instance)")
 				continue
 			}
 		}
@@ -433,30 +728,17 @@ func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionR
 		// Track evaluated resources
 		metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource, namespace).Inc()
 
-		// Get expiration time for this resource
+		// Get expiration time
 		expirationTime, reason := j.getExpirationTime(&obj)
 		if expirationTime.IsZero() {
-			// No expiration set, skip
+			// No expiration - make sure it's not in the store
+			j.expirationStore.Remove(gvr, objNamespace, objName)
 			continue
 		}
 
-		if now.After(expirationTime) {
-			// Already expired, process immediately
-			j.WorkQueue <- WorkItem{
-				Resource:   gvr,
-				Namespace:  namespace,
-				Name:       objName,
-				Obj:        &obj,
-				EnqueuedAt: time.Now(),
-			}
-		} else if expirationTime.Before(nextInterval) {
-			// Will expire before next interval, schedule deletion
-			j.scheduleDeletion(ctx, gvr, namespace, objName, expirationTime, reason)
-		}
-		// else: will expire after next interval, will be handled in a future scan
+		// Update store with current state
+		j.expirationStore.Add(gvr, objNamespace, objName, expirationTime, reason)
 	}
-
-	return nil
 }
 
 // scheduleDeletion schedules a resource for deletion at a specific time

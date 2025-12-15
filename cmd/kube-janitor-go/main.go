@@ -36,7 +36,9 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().Bool("dry-run", false, "Dry run mode: print what would be deleted without actually deleting")
-	rootCmd.PersistentFlags().Duration("interval", 30*time.Second, "Interval between cleanup runs")
+	rootCmd.PersistentFlags().Duration("interval", 0, "Deprecated: use --reconcile-interval instead")
+	rootCmd.PersistentFlags().Duration("reconcile-interval", 10*time.Minute, "Interval between full reconciliation runs")
+	rootCmd.PersistentFlags().Duration("check-interval", 1*time.Second, "Interval between expiration checks")
 	rootCmd.PersistentFlags().Bool("once", false, "Run once and exit")
 	rootCmd.PersistentFlags().StringSlice("include-resources", []string{}, "Resource types to include (default: all)")
 	rootCmd.PersistentFlags().StringSlice("exclude-resources", []string{"events", "controllerrevisions"}, "Resource types to exclude")
@@ -136,7 +138,9 @@ func run(_ *cobra.Command, _ []string) error {
 	// Create and run janitor
 	janitorConfig := janitor.Config{
 		DryRun:                  viper.GetBool("dry-run"),
-		Interval:                viper.GetDuration("interval"),
+		Interval:                viper.GetDuration("interval"), // Deprecated, kept for backward compatibility
+		ReconcileInterval:       viper.GetDuration("reconcile-interval"),
+		CheckInterval:           viper.GetDuration("check-interval"),
 		Once:                    viper.GetBool("once"),
 		IncludeResources:        viper.GetStringSlice("include-resources"),
 		ExcludeResources:        viper.GetStringSlice("exclude-resources"),
