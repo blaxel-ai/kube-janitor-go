@@ -7,7 +7,7 @@ toolchain go1.24.3
 require (
 	github.com/google/cel-go v0.25.0
 	github.com/prometheus/client_golang v1.22.0
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
