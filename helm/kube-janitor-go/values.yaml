@@ -68,6 +68,12 @@ janitor:
   
   # Maximum number of concurrent workers
   maxWorkers: 10
+
+  # Kubernetes API client QPS limit (set to 0 to use client-go default)
+  kubeAPIQPS: 25
+
+  # Kubernetes API client burst limit (set to 0 to use 2x QPS when QPS is set, otherwise client-go default)
+  kubeAPIBurst: 50
   
   # Resource types to include (empty means all)
   includeResources: []

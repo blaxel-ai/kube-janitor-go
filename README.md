@@ -262,6 +262,8 @@ Flags:
       --metrics-port int            Port for Prometheus metrics (default 8080)
       --log-level string            Log level: debug, info, warn, error (default "info")
       --max-workers int             Maximum number of concurrent workers (default 10)
+      --kube-api-qps float32        Kubernetes API client QPS limit (set 0 to use client-go default) (default 25)
+      --kube-api-burst int          Kubernetes API client burst limit (set 0 to use 2x QPS when QPS is set, otherwise client-go default) (default 50)
   -h, --help                        help for kube-janitor-go
 ```
 

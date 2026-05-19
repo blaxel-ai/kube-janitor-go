@@ -91,6 +91,8 @@ The following table lists the configurable parameters of the kube-janitor-go cha
 | `janitor.interval` | Run interval (default: 30s) | `"60s"` |
 | `janitor.logLevel` | Log level: debug, info, warn, error | `"info"` |
 | `janitor.maxWorkers` | Maximum number of concurrent workers | `10` |
+| `janitor.kubeAPIQPS` | Kubernetes API client QPS limit (set to 0 to use client-go default) | `25` |
+| `janitor.kubeAPIBurst` | Kubernetes API client burst limit (set to 0 to use 2x QPS when QPS is set, otherwise client-go default) | `50` |
 | `janitor.rulesFile.enabled` | Enable rules file | `true` |
 | `janitor.rulesFile.path` | Path to rules file (mounted from ConfigMap) | `"/config/rules.yaml"` |
 | `janitor.rulesFile.rules` | Rules configuration | See values.yaml |
@@ -186,6 +188,8 @@ The following table lists the configurable parameters of the kube-janitor-go cha
 | `janitor.runOnce` | Run once and exit | `false` |
 | `janitor.logLevel` | Log level (debug, info, warn, error) | `info` |
 | `janitor.maxWorkers` | Maximum concurrent workers | `10` |
+| `janitor.kubeAPIQPS` | Kubernetes API client QPS limit | `25` |
+| `janitor.kubeAPIBurst` | Kubernetes API client burst limit | `50` |
 | `janitor.includeResources` | Resource types to include | `[]` |
 | `janitor.excludeResources` | Resource types to exclude | `["events", "controllerrevisions"]` |
 | `janitor.includeNamespaces` | Namespaces to include | `[]` |
