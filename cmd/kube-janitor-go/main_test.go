@@ -16,7 +16,33 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/rest"
 )
+
+func TestConfigureKubeAPIClientUsesDefaultRateLimits(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	require.NoError(t, viper.BindPFlags(rootCmd.PersistentFlags()))
+
+	config := &rest.Config{}
+	configureKubeAPIClient(config)
+
+	assert.Equal(t, defaultKubeAPIQPS, config.QPS)
+	assert.Equal(t, defaultKubeAPIBurst, config.Burst)
+}
+
+func TestConfigureKubeAPIClientAllowsClientGoDefaults(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.Set("kube-api-qps", 0)
+	viper.Set("kube-api-burst", 0)
+
+	config := &rest.Config{}
+	configureKubeAPIClient(config)
+
+	assert.Zero(t, config.QPS)
+	assert.Zero(t, config.Burst)
+}
 
 func TestRunRateLimitsJanitorResourceListRequests(t *testing.T) {
 	const (

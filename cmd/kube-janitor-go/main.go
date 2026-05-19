@@ -25,6 +25,11 @@ var (
 	date    = "unknown"
 )
 
+const (
+	defaultKubeAPIQPS   = float32(25)
+	defaultKubeAPIBurst = 50
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "kube-janitor-go",
 	Short: "Clean up Kubernetes resources based on TTL annotations and rules",
@@ -47,8 +52,8 @@ func init() {
 	rootCmd.PersistentFlags().Int("metrics-port", 8080, "Port for Prometheus metrics")
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.PersistentFlags().Int("max-workers", 10, "Maximum number of concurrent workers")
-	rootCmd.PersistentFlags().Float32("kube-api-qps", 0, "Kubernetes API client QPS limit (default: client-go default)")
-	rootCmd.PersistentFlags().Int("kube-api-burst", 0, "Kubernetes API client burst limit (default: 2x QPS when QPS is set, otherwise client-go default)")
+	rootCmd.PersistentFlags().Float32("kube-api-qps", defaultKubeAPIQPS, "Kubernetes API client QPS limit (set 0 to use client-go default)")
+	rootCmd.PersistentFlags().Int("kube-api-burst", defaultKubeAPIBurst, "Kubernetes API client burst limit (set 0 to use 2x QPS when QPS is set, otherwise client-go default)")
 	rootCmd.PersistentFlags().String("kubeconfig", "", "Path to kubeconfig file (optional)")
 
 	// Bind flags to viper

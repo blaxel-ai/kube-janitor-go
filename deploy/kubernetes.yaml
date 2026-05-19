@@ -95,8 +95,6 @@ spec:
           - --exclude-namespaces=kube-system,kube-public,kube-node-lease,kube-janitor
           - --rules-file=/config/rules.yaml
           - --log-level=info
-          - --kube-api-qps=25
-          - --kube-api-burst=100
         resources:
           requests:
             memory: "64Mi"
