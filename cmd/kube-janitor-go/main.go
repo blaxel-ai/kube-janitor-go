@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +47,8 @@ func init() {
 	rootCmd.PersistentFlags().Int("metrics-port", 8080, "Port for Prometheus metrics")
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.PersistentFlags().Int("max-workers", 10, "Maximum number of concurrent workers")
+	rootCmd.PersistentFlags().Float32("kube-api-qps", 0, "Kubernetes API client QPS limit (default: client-go default)")
+	rootCmd.PersistentFlags().Int("kube-api-burst", 0, "Kubernetes API client burst limit (default: 2x QPS when QPS is set, otherwise client-go default)")
 	rootCmd.PersistentFlags().String("kubeconfig", "", "Path to kubeconfig file (optional)")
 
 	// Bind flags to viper
@@ -57,6 +60,7 @@ func init() {
 func initConfig() {
 	// Set environment variable prefix
 	viper.SetEnvPrefix("KUBE_JANITOR")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
 	// Set log level
@@ -98,6 +102,7 @@ func run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get kubernetes config: %w", err)
 	}
+	configureKubeAPIClient(config)
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -148,6 +153,28 @@ func getKubeConfig() (*rest.Config, error) {
 	}
 
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
+}
+
+func configureKubeAPIClient(config *rest.Config) {
+	qps := float32(viper.GetFloat64("kube-api-qps"))
+	burst := viper.GetInt("kube-api-burst")
+
+	if qps > 0 {
+		config.QPS = qps
+	}
+	if burst > 0 {
+		config.Burst = burst
+	} else if qps > 0 {
+		config.Burst = int(qps * 2)
+		if config.Burst < 10 {
+			config.Burst = 10
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"qps":   config.QPS,
+		"burst": config.Burst,
+	}).Info("Configured Kubernetes API client rate limits")
 }
 
 func main() {
