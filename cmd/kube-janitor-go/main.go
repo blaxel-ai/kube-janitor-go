@@ -54,6 +54,7 @@ func init() {
 	rootCmd.PersistentFlags().Int("max-workers", 10, "Maximum number of concurrent workers")
 	rootCmd.PersistentFlags().Float32("kube-api-qps", defaultKubeAPIQPS, "Kubernetes API client QPS limit (set 0 to use client-go default)")
 	rootCmd.PersistentFlags().Int("kube-api-burst", defaultKubeAPIBurst, "Kubernetes API client burst limit (set 0 to use 2x QPS when QPS is set, otherwise client-go default)")
+	rootCmd.PersistentFlags().Int64("list-page-limit", 100, "Maximum number of resources to request per paginated Kubernetes list call")
 	rootCmd.PersistentFlags().String("kubeconfig", "", "Path to kubeconfig file (optional)")
 
 	// Bind flags to viper
@@ -133,6 +134,7 @@ func run(_ *cobra.Command, _ []string) error {
 		ExcludeNamespaces: viper.GetStringSlice("exclude-namespaces"),
 		RulesFile:         viper.GetString("rules-file"),
 		MaxWorkers:        viper.GetInt("max-workers"),
+		ListPageLimit:     getListPageLimit(),
 	}
 
 	j, err := janitor.New(clientset, config, janitorConfig)
@@ -180,6 +182,15 @@ func configureKubeAPIClient(config *rest.Config) {
 		"qps":   config.QPS,
 		"burst": config.Burst,
 	}).Info("Configured Kubernetes API client rate limits")
+}
+
+func getListPageLimit() int64 {
+	limit := viper.GetInt64("list-page-limit")
+	if limit <= 0 {
+		logrus.WithField("list_page_limit", limit).Warn("Invalid list page limit, using default")
+		return 100
+	}
+	return limit
 }
 
 func main() {

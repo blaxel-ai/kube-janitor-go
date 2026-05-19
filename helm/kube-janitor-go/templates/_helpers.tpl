@@ -73,6 +73,7 @@ Build the command-line arguments for kube-janitor-go
 {{- $args = append $args (printf "--log-level=%s" .Values.janitor.logLevel) }}
 {{- $args = append $args (printf "--max-workers=%d" (int .Values.janitor.maxWorkers)) }}
 {{- $args = append $args (printf "--metrics-port=%d" (int .Values.metrics.port)) }}
+{{- $args = append $args (printf "--list-page-limit=%d" (int .Values.janitor.listPageLimit)) }}
 {{- if and (hasKey .Values.janitor "kubeAPIQPS") (ne .Values.janitor.kubeAPIQPS nil) }}
 {{- $args = append $args (printf "--kube-api-qps=%v" .Values.janitor.kubeAPIQPS) }}
 {{- end }}

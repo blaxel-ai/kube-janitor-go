@@ -74,6 +74,9 @@ janitor:
 
   # Kubernetes API client burst limit (set to 0 to use 2x QPS when QPS is set, otherwise client-go default)
   kubeAPIBurst: 50
+
+  # Maximum number of resources to request per paginated Kubernetes list call
+  listPageLimit: 100
   
   # Resource types to include (empty means all)
   includeResources: []
