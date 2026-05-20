@@ -125,14 +125,14 @@ func TestMetricsIncrement(t *testing.T) {
 			Name: "kube_janitor_resources_deleted_total_test",
 			Help: "Total number of resources deleted",
 		},
-		[]string{"resource", "namespace", "reason"},
+		[]string{"resource", "reason"},
 	)
 	ResourcesEvaluated = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "kube_janitor_resources_evaluated_total_test",
 			Help: "Total number of resources evaluated",
 		},
-		[]string{"resource", "namespace"},
+		[]string{"resource"},
 	)
 	CleanupDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -155,8 +155,8 @@ func TestMetricsIncrement(t *testing.T) {
 	prometheus.MustRegister(Errors)
 
 	// Test incrementing metrics
-	ResourcesDeleted.WithLabelValues("pods", "default", "ttl_expired").Inc()
-	ResourcesEvaluated.WithLabelValues("pods", "default").Inc()
+	ResourcesDeleted.WithLabelValues("pods", "ttl_expired").Inc()
+	ResourcesEvaluated.WithLabelValues("pods").Inc()
 	Errors.WithLabelValues("delete_failed").Inc()
 
 	// Test histogram

@@ -50,6 +50,15 @@ const (
 	ActionArchive = "archive" // Future implementation
 )
 
+const (
+	deletionReasonDeleteIfMaxAge = "delete_if_max_age"
+	deletionReasonDeleteIfIdle   = "delete_if_idle"
+	deletionReasonDeleteIfDate   = "delete_if_date"
+	deletionReasonLegacyTTL      = "legacy_ttl"
+	deletionReasonLegacyExpires  = "legacy_expires"
+	deletionReasonRuleTTL        = "rule_ttl"
+)
+
 // Config holds the janitor configuration
 type Config struct {
 	DryRun            bool
@@ -82,6 +91,12 @@ type WorkItem struct {
 	Namespace string
 	Name      string
 	Obj       *unstructured.Unstructured
+}
+
+type deletionDecision struct {
+	shouldDelete    bool
+	reason          string
+	detailedMessage string
 }
 
 // New creates a new Janitor instance
@@ -268,7 +283,7 @@ func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionR
 	for _, item := range list.Items {
 		obj := item
 		// Track evaluated resources
-		metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource, namespace).Inc()
+		metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource).Inc()
 
 		j.WorkQueue <- WorkItem{
 			Resource:  gvr,
@@ -305,12 +320,15 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	})
 
 	// Check if resource should be deleted
-	shouldDelete, reason := j.shouldDelete(item.Obj)
-	if !shouldDelete {
+	decision := j.shouldDelete(item.Obj)
+	if !decision.shouldDelete {
 		return
 	}
 
-	logger.WithField("reason", reason).Info("Resource marked for deletion")
+	logger.WithFields(logrus.Fields{
+		"reason":          decision.reason,
+		"detailedMessage": decision.detailedMessage,
+	}).Info("Resource marked for deletion")
 
 	// Create a reference to the object for the event
 	ref := &corev1.ObjectReference{
@@ -325,7 +343,7 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 		logger.Info("DRY RUN: Would delete resource")
 		// Create event for dry-run
 		eventMessage := fmt.Sprintf("DRY RUN: Would delete %s %s/%s - %s",
-			item.Resource.Resource, item.Namespace, item.Name, reason)
+			item.Resource.Resource, item.Namespace, item.Name, decision.detailedMessage)
 		j.EventRecorder.Event(ref, corev1.EventTypeNormal, "DryRunDeletion", eventMessage)
 		return
 	}
@@ -350,11 +368,11 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	}
 
 	logger.Info("Resource deleted")
-	metrics.ResourcesDeleted.WithLabelValues(item.Resource.Resource, item.Namespace, reason).Inc()
+	metrics.ResourcesDeleted.WithLabelValues(item.Resource.Resource, decision.reason).Inc()
 
 	// Create event for successful deletion
 	eventMessage := fmt.Sprintf("Deleted %s %s/%s - %s",
-		item.Resource.Resource, item.Namespace, item.Name, reason)
+		item.Resource.Resource, item.Namespace, item.Name, decision.detailedMessage)
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
 }
 
@@ -496,7 +514,10 @@ func findAnnotationsWithPrefix(annotations map[string]string, prefix string) map
 	return result
 }
 
-func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
+// shouldDelete returns a deletion reason that is used as a Prometheus metric label;
+// therefore reason must have a finite set of possible values. Put dynamic context
+// such as ages, TTLs, timestamps, annotation keys, and rule IDs in detailedMessage.
+func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision {
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -518,7 +539,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		"maxAgeAnnotations": len(maxAgeAnnotations),
 	}).Debug("Checking delete-if-max-age annotations")
 	for annotationKey, annotationValue := range maxAgeAnnotations {
-		shouldDelete, reason, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
+		shouldDelete, detailedMessage, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"annotation": annotationKey,
@@ -527,7 +548,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 			continue
 		}
 		if shouldDelete {
-			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+			return deletionDecision{
+				shouldDelete:    true,
+				reason:          deletionReasonDeleteIfMaxAge,
+				detailedMessage: fmt.Sprintf("%s (annotation: %s)", detailedMessage, annotationKey),
+			}
 		}
 	}
 
@@ -548,7 +573,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 			"annotation": annotationKey,
 			"value":      annotationValue,
 		}).Debug("Processing delete-if-idle annotation")
-		shouldDelete, reason, err := j.evaluateDeleteIfIdle(annotationValue, obj)
+		shouldDelete, detailedMessage, err := j.evaluateDeleteIfIdle(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"annotation": annotationKey,
@@ -557,7 +582,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 			continue
 		}
 		if shouldDelete {
-			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+			return deletionDecision{
+				shouldDelete:    true,
+				reason:          deletionReasonDeleteIfIdle,
+				detailedMessage: fmt.Sprintf("%s (annotation: %s)", detailedMessage, annotationKey),
+			}
 		}
 	}
 
@@ -570,7 +599,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		"dateAnnotations": len(dateAnnotations),
 	}).Debug("Checking delete-if-date annotations")
 	for annotationKey, annotationValue := range dateAnnotations {
-		shouldDelete, reason, err := j.evaluateDeleteIfDate(annotationValue, obj)
+		shouldDelete, detailedMessage, err := j.evaluateDeleteIfDate(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"annotation": annotationKey,
@@ -579,7 +608,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 			continue
 		}
 		if shouldDelete {
-			return true, fmt.Sprintf("%s (annotation: %s)", reason, annotationKey)
+			return deletionDecision{
+				shouldDelete:    true,
+				reason:          deletionReasonDeleteIfDate,
+				detailedMessage: fmt.Sprintf("%s (annotation: %s)", detailedMessage, annotationKey),
+			}
 		}
 	}
 
@@ -623,14 +656,18 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		duration, err := ParseExtendedDuration(ttl)
 		if err != nil {
 			logrus.WithError(err).WithField("ttl", ttl).Warn("Invalid TTL format")
-			return false, ""
+			return deletionDecision{}
 		}
 
 		age := time.Since(obj.GetCreationTimestamp().Time)
 		if age > duration {
-			return true, fmt.Sprintf("Legacy TTL expired (age: %s, ttl: %s)", age, duration)
+			return deletionDecision{
+				shouldDelete:    true,
+				reason:          deletionReasonLegacyTTL,
+				detailedMessage: fmt.Sprintf("Legacy TTL expired (age: %s, ttl: %s)", age, duration),
+			}
 		}
-		return false, ""
+		return deletionDecision{}
 	}
 
 	// Fallback to legacy expiration annotation for backward compatibility
@@ -638,13 +675,17 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		expirationTime, err := parseExpirationTime(expires)
 		if err != nil {
 			logrus.WithError(err).WithField("expires", expires).Warn("Invalid expiration format")
-			return false, ""
+			return deletionDecision{}
 		}
 
 		if time.Now().After(expirationTime) {
-			return true, fmt.Sprintf("Legacy expiration time reached (%s)", expires)
+			return deletionDecision{
+				shouldDelete:    true,
+				reason:          deletionReasonLegacyExpires,
+				detailedMessage: fmt.Sprintf("Legacy expiration time reached (%s)", expires),
+			}
 		}
-		return false, ""
+		return deletionDecision{}
 	}
 
 	// Check rules
@@ -658,7 +699,11 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		if rule, ttl := j.RuleEngine.Evaluate(obj); rule != nil {
 			age := time.Since(obj.GetCreationTimestamp().Time)
 			if age > ttl {
-				return true, fmt.Sprintf("Rule '%s' matched (age: %s, ttl: %s)", rule.ID, age, ttl)
+				return deletionDecision{
+					shouldDelete:    true,
+					reason:          deletionReasonRuleTTL,
+					detailedMessage: fmt.Sprintf("Rule '%s' matched (age: %s, ttl: %s)", rule.ID, age, ttl),
+				}
 			}
 		}
 	}
@@ -668,7 +713,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) (bool, string) {
 		"namespace": obj.GetNamespace(),
 		"name":      obj.GetName(),
 	}).Debug("No deletion conditions met - resource will be kept")
-	return false, ""
+	return deletionDecision{}
 }
 
 func (j *Janitor) getNamespaces(ctx context.Context) ([]string, error) {

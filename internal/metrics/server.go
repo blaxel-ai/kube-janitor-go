@@ -17,7 +17,7 @@ var (
 			Name: "kube_janitor_resources_deleted_total",
 			Help: "Total number of resources deleted",
 		},
-		[]string{"resource", "namespace", "reason"},
+		[]string{"resource", "reason"},
 	)
 
 	// ResourcesEvaluated is a counter for evaluated resources
@@ -26,7 +26,7 @@ var (
 			Name: "kube_janitor_resources_evaluated_total",
 			Help: "Total number of resources evaluated",
 		},
-		[]string{"resource", "namespace"},
+		[]string{"resource"},
 	)
 
 	// CleanupDuration is a histogram for cleanup run durations
