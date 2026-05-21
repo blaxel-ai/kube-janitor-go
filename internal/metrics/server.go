@@ -38,6 +38,16 @@ var (
 		},
 	)
 
+	// TTLDeletionLag is a histogram for the delay between TTL expiry and deletion
+	TTLDeletionLag = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kube_janitor_ttl_deletion_lag_seconds",
+			Help:    "Histogram of delay between TTL expiration time and successful resource deletion",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 20),
+		},
+		[]string{"resource", "reason"},
+	)
+
 	// Errors is a counter for errors
 	Errors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -53,6 +63,7 @@ func init() {
 	prometheus.MustRegister(ResourcesDeleted)
 	prometheus.MustRegister(ResourcesEvaluated)
 	prometheus.MustRegister(CleanupDuration)
+	prometheus.MustRegister(TTLDeletionLag)
 	prometheus.MustRegister(Errors)
 }
 

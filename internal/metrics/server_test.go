@@ -25,6 +25,7 @@ func TestMetricsRegistration(t *testing.T) {
 	assert.NotNil(t, ResourcesDeleted)
 	assert.NotNil(t, ResourcesEvaluated)
 	assert.NotNil(t, CleanupDuration)
+	assert.NotNil(t, TTLDeletionLag)
 	assert.NotNil(t, Errors)
 }
 
@@ -117,6 +118,7 @@ func TestMetricsIncrement(t *testing.T) {
 	prometheus.Unregister(ResourcesDeleted)
 	prometheus.Unregister(ResourcesEvaluated)
 	prometheus.Unregister(CleanupDuration)
+	prometheus.Unregister(TTLDeletionLag)
 	prometheus.Unregister(Errors)
 
 	// Re-register metrics
@@ -141,6 +143,14 @@ func TestMetricsIncrement(t *testing.T) {
 			Buckets: prometheus.DefBuckets,
 		},
 	)
+	TTLDeletionLag = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kube_janitor_ttl_deletion_lag_seconds_test",
+			Help:    "Histogram of delay between TTL expiration time and successful resource deletion",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 20),
+		},
+		[]string{"resource", "reason"},
+	)
 	Errors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "kube_janitor_errors_total_test",
@@ -152,11 +162,13 @@ func TestMetricsIncrement(t *testing.T) {
 	prometheus.MustRegister(ResourcesDeleted)
 	prometheus.MustRegister(ResourcesEvaluated)
 	prometheus.MustRegister(CleanupDuration)
+	prometheus.MustRegister(TTLDeletionLag)
 	prometheus.MustRegister(Errors)
 
 	// Test incrementing metrics
 	ResourcesDeleted.WithLabelValues("pods", "ttl_expired").Inc()
 	ResourcesEvaluated.WithLabelValues("pods").Inc()
+	TTLDeletionLag.WithLabelValues("pods", "legacy_ttl").Observe(42)
 	Errors.WithLabelValues("delete_failed").Inc()
 
 	// Test histogram
@@ -171,6 +183,7 @@ func TestMetricsIncrement(t *testing.T) {
 	foundDeleted := false
 	foundEvaluated := false
 	foundDuration := false
+	foundTTLLag := false
 	foundErrors := false
 
 	for _, metric := range metrics {
@@ -187,6 +200,10 @@ func TestMetricsIncrement(t *testing.T) {
 			foundDuration = true
 			assert.Len(t, metric.GetMetric(), 1)
 			assert.Greater(t, metric.GetMetric()[0].GetHistogram().GetSampleCount(), uint64(0))
+		case "kube_janitor_ttl_deletion_lag_seconds_test":
+			foundTTLLag = true
+			assert.Len(t, metric.GetMetric(), 1)
+			assert.Equal(t, uint64(1), metric.GetMetric()[0].GetHistogram().GetSampleCount())
 		case "kube_janitor_errors_total_test":
 			foundErrors = true
 			assert.Len(t, metric.GetMetric(), 1)
@@ -197,5 +214,6 @@ func TestMetricsIncrement(t *testing.T) {
 	assert.True(t, foundDeleted, "ResourcesDeleted metric not found")
 	assert.True(t, foundEvaluated, "ResourcesEvaluated metric not found")
 	assert.True(t, foundDuration, "CleanupDuration metric not found")
+	assert.True(t, foundTTLLag, "TTLDeletionLag metric not found")
 	assert.True(t, foundErrors, "Errors metric not found")
 }

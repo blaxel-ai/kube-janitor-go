@@ -97,6 +97,7 @@ type deletionDecision struct {
 	shouldDelete    bool
 	reason          string
 	detailedMessage string
+	ttlDeadline     time.Time
 }
 
 // New creates a new Janitor instance
@@ -369,6 +370,13 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 
 	logger.Info("Resource deleted")
 	metrics.ResourcesDeleted.WithLabelValues(item.Resource.Resource, decision.reason).Inc()
+	if !decision.ttlDeadline.IsZero() {
+		ttlLag := time.Since(decision.ttlDeadline)
+		if ttlLag < 0 {
+			ttlLag = 0
+		}
+		metrics.TTLDeletionLag.WithLabelValues(item.Resource.Resource, decision.reason).Observe(ttlLag.Seconds())
+	}
 
 	// Create event for successful deletion
 	eventMessage := fmt.Sprintf("Deleted %s %s/%s - %s",
@@ -377,17 +385,20 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 }
 
 // evaluateDeleteIfMaxAge checks if resource should be deleted based on max age
-func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstructured) (bool, string, error) {
+func (j *Janitor) evaluateDeleteIfMaxAge(value string, obj *unstructured.Unstructured) (bool, string, time.Time, error) {
 	duration, err := ParseExtendedDuration(value)
 	if err != nil {
-		return false, "", fmt.Errorf("invalid duration format: %w", err)
+		return false, "", time.Time{}, fmt.Errorf("invalid duration format: %w", err)
 	}
 
-	age := time.Since(obj.GetCreationTimestamp().Time)
-	if age > duration {
-		return true, fmt.Sprintf("Delete max-age policy triggered (age: %s, max-age: %s)", age, duration), nil
+	createdAt := obj.GetCreationTimestamp().Time
+	now := time.Now()
+	age := now.Sub(createdAt)
+	ttlDeadline := createdAt.Add(duration)
+	if now.After(ttlDeadline) {
+		return true, fmt.Sprintf("Delete max-age policy triggered (age: %s, max-age: %s)", age, duration), ttlDeadline, nil
 	}
-	return false, "", nil
+	return false, "", time.Time{}, nil
 }
 
 // evaluateDeleteIfDate checks if resource should be deleted based on expiration date
@@ -435,7 +446,7 @@ func (j *Janitor) evaluateArchiveIfDate(value string, obj *unstructured.Unstruct
 }
 
 // evaluateDeleteIfIdle checks if resource should be deleted based on idle time
-func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructured) (bool, string, error) {
+func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructured) (bool, string, time.Time, error) {
 	logrus.WithFields(logrus.Fields{
 		"resource":             obj.GetKind(),
 		"namespace":            obj.GetNamespace(),
@@ -461,7 +472,7 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 			"namespace": obj.GetNamespace(),
 			"name":      obj.GetName(),
 		}).Debug("Delete-if-idle policy ignored: no lastUsedAt annotation found")
-		return false, "", nil
+		return false, "", time.Time{}, nil
 	}
 
 	lastUsedAt, err := time.Parse(time.RFC3339, lastUsedAtStr)
@@ -472,7 +483,7 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 			"name":          obj.GetName(),
 			"lastUsedAtStr": lastUsedAtStr,
 		}).Debug("Failed to parse lastUsedAt timestamp")
-		return false, "", fmt.Errorf("invalid lastUsedAt format: %w", err)
+		return false, "", time.Time{}, fmt.Errorf("invalid lastUsedAt format: %w", err)
 	}
 
 	duration, err := ParseExtendedDuration(value)
@@ -483,24 +494,26 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 			"name":      obj.GetName(),
 			"value":     value,
 		}).Debug("Failed to parse duration")
-		return false, "", fmt.Errorf("invalid duration format: %w", err)
+		return false, "", time.Time{}, fmt.Errorf("invalid duration format: %w", err)
 	}
 
-	idleTime := time.Since(lastUsedAt)
+	now := time.Now()
+	idleTime := now.Sub(lastUsedAt)
+	ttlDeadline := lastUsedAt.Add(duration)
 	logrus.WithFields(logrus.Fields{
 		"resource":     obj.GetKind(),
 		"namespace":    obj.GetNamespace(),
 		"name":         obj.GetName(),
 		"idleTime":     idleTime,
 		"duration":     duration,
-		"shouldDelete": idleTime > duration,
+		"shouldDelete": now.After(ttlDeadline),
 		"lastUsedAt":   lastUsedAt,
 	}).Debug("Evaluating idle time")
 
-	if idleTime > duration {
-		return true, fmt.Sprintf("Delete idle policy triggered (idle: %s, max-idle: %s)", idleTime, duration), nil
+	if now.After(ttlDeadline) {
+		return true, fmt.Sprintf("Delete idle policy triggered (idle: %s, max-idle: %s)", idleTime, duration), ttlDeadline, nil
 	}
-	return false, "", nil
+	return false, "", time.Time{}, nil
 }
 
 // findAnnotationsWithPrefix finds all annotations that start with the given prefix
@@ -539,7 +552,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 		"maxAgeAnnotations": len(maxAgeAnnotations),
 	}).Debug("Checking delete-if-max-age annotations")
 	for annotationKey, annotationValue := range maxAgeAnnotations {
-		shouldDelete, detailedMessage, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
+		shouldDelete, detailedMessage, ttlDeadline, err := j.evaluateDeleteIfMaxAge(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"annotation": annotationKey,
@@ -552,6 +565,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 				shouldDelete:    true,
 				reason:          deletionReasonDeleteIfMaxAge,
 				detailedMessage: fmt.Sprintf("%s (annotation: %s)", detailedMessage, annotationKey),
+				ttlDeadline:     ttlDeadline,
 			}
 		}
 	}
@@ -573,7 +587,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 			"annotation": annotationKey,
 			"value":      annotationValue,
 		}).Debug("Processing delete-if-idle annotation")
-		shouldDelete, detailedMessage, err := j.evaluateDeleteIfIdle(annotationValue, obj)
+		shouldDelete, detailedMessage, ttlDeadline, err := j.evaluateDeleteIfIdle(annotationValue, obj)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"annotation": annotationKey,
@@ -586,6 +600,7 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 				shouldDelete:    true,
 				reason:          deletionReasonDeleteIfIdle,
 				detailedMessage: fmt.Sprintf("%s (annotation: %s)", detailedMessage, annotationKey),
+				ttlDeadline:     ttlDeadline,
 			}
 		}
 	}
@@ -659,12 +674,16 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 			return deletionDecision{}
 		}
 
-		age := time.Since(obj.GetCreationTimestamp().Time)
-		if age > duration {
+		createdAt := obj.GetCreationTimestamp().Time
+		now := time.Now()
+		age := now.Sub(createdAt)
+		ttlDeadline := createdAt.Add(duration)
+		if now.After(ttlDeadline) {
 			return deletionDecision{
 				shouldDelete:    true,
 				reason:          deletionReasonLegacyTTL,
 				detailedMessage: fmt.Sprintf("Legacy TTL expired (age: %s, ttl: %s)", age, duration),
+				ttlDeadline:     ttlDeadline,
 			}
 		}
 		return deletionDecision{}
@@ -697,12 +716,16 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 	}).Debug("Checking CEL rules")
 	if j.RuleEngine != nil {
 		if rule, ttl := j.RuleEngine.Evaluate(obj); rule != nil {
-			age := time.Since(obj.GetCreationTimestamp().Time)
-			if age > ttl {
+			createdAt := obj.GetCreationTimestamp().Time
+			now := time.Now()
+			age := now.Sub(createdAt)
+			ttlDeadline := createdAt.Add(ttl)
+			if now.After(ttlDeadline) {
 				return deletionDecision{
 					shouldDelete:    true,
 					reason:          deletionReasonRuleTTL,
 					detailedMessage: fmt.Sprintf("Rule '%s' matched (age: %s, ttl: %s)", rule.ID, age, ttl),
+					ttlDeadline:     ttlDeadline,
 				}
 			}
 		}

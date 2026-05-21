@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaxel-ai/kube-janitor-go/internal/metrics"
 	"github.com/blaxel-ai/kube-janitor-go/internal/rules"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -85,6 +88,7 @@ func TestShouldDelete(t *testing.T) {
 		wantDelete          bool
 		wantReason          string
 		wantDetailedMessage string
+		wantTTLDeadline     bool
 	}{
 		{
 			name: "Delete-if-max-age expired",
@@ -102,6 +106,7 @@ func TestShouldDelete(t *testing.T) {
 			wantDelete:          true,
 			wantReason:          deletionReasonDeleteIfMaxAge,
 			wantDetailedMessage: "Delete max-age policy triggered",
+			wantTTLDeadline:     true,
 		},
 		{
 			name: "Delete-if-idle expired",
@@ -119,6 +124,7 @@ func TestShouldDelete(t *testing.T) {
 			wantDelete:          true,
 			wantReason:          deletionReasonDeleteIfIdle,
 			wantDetailedMessage: "Delete idle policy triggered",
+			wantTTLDeadline:     true,
 		},
 		{
 			name: "TTL expired",
@@ -136,6 +142,7 @@ func TestShouldDelete(t *testing.T) {
 			wantDelete:          true,
 			wantReason:          deletionReasonLegacyTTL,
 			wantDetailedMessage: "TTL expired",
+			wantTTLDeadline:     true,
 		},
 		{
 			name: "Rule TTL expired",
@@ -152,6 +159,7 @@ func TestShouldDelete(t *testing.T) {
 			wantDelete:          true,
 			wantReason:          deletionReasonRuleTTL,
 			wantDetailedMessage: "Rule 'cleanup-test-pods' matched",
+			wantTTLDeadline:     true,
 		},
 		{
 			name: "TTL not expired",
@@ -342,9 +350,11 @@ func TestShouldDelete(t *testing.T) {
 				assert.Contains(t, gotDecision.detailedMessage, tt.wantDetailedMessage)
 				assert.NotContains(t, gotDecision.detailedMessage, gotDecision.reason,
 					"bounded metric reason should not be reused as the detailed human-readable message")
+				assert.Equal(t, tt.wantTTLDeadline, !gotDecision.ttlDeadline.IsZero())
 			} else {
 				assert.Empty(t, gotDecision.reason)
 				assert.Empty(t, gotDecision.detailedMessage)
+				assert.True(t, gotDecision.ttlDeadline.IsZero())
 			}
 		})
 	}
@@ -406,8 +416,10 @@ func TestProcessItem(t *testing.T) {
 		Obj:       pod,
 	}
 
+	ttlLagSamplesBefore := ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL)
 	j.processItem(ctx, item)
 	assert.True(t, deleteCalled, "Delete should have been called")
+	assert.Equal(t, ttlLagSamplesBefore+1, ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL))
 }
 
 func TestProcessItemDryRun(t *testing.T) {
@@ -466,8 +478,44 @@ func TestProcessItemDryRun(t *testing.T) {
 		Obj:       pod,
 	}
 
+	ttlLagSamplesBefore := ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL)
 	j.processItem(ctx, item)
 	assert.False(t, deleteCalled, "Delete should not have been called in dry-run mode")
+	assert.Equal(t, ttlLagSamplesBefore, ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL))
+}
+
+func ttlDeletionLagSampleCount(t *testing.T, resource, reason string) uint64 {
+	t.Helper()
+
+	collected := make(chan prometheus.Metric)
+	go func() {
+		metrics.TTLDeletionLag.Collect(collected)
+		close(collected)
+	}()
+
+	var count uint64
+	for metric := range collected {
+		var dtoMetric dto.Metric
+		require.NoError(t, metric.Write(&dtoMetric))
+		if metricHasLabels(&dtoMetric, map[string]string{
+			"resource": resource,
+			"reason":   reason,
+		}) {
+			count += dtoMetric.GetHistogram().GetSampleCount()
+		}
+	}
+	return count
+}
+
+func metricHasLabels(metric *dto.Metric, labels map[string]string) bool {
+	matched := 0
+	for _, label := range metric.GetLabel() {
+		want, ok := labels[label.GetName()]
+		if ok && label.GetValue() == want {
+			matched++
+		}
+	}
+	return matched == len(labels)
 }
 
 func TestGetNamespaces(t *testing.T) {
