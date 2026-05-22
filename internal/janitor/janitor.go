@@ -253,8 +253,8 @@ func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionR
 				continue
 			}
 
-			// Track evaluated resources
-			metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource, namespace).Inc()
+			// Track evaluated resources without namespace/workspace labels to keep metric cardinality bounded.
+			metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource).Inc()
 
 			j.WorkQueue <- WorkItem{
 				Resource:  gvr,
