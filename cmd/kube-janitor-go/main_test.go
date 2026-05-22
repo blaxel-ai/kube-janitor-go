@@ -113,9 +113,9 @@ func TestRunRateLimitsJanitorPaginatedResourceListRequests(t *testing.T) {
 			})
 			requestCount := len(podListRequests)
 			elapsedSinceFirstRequest := time.Since(podListRequests[0].timestamp)
-			podIds := make([]int, listPageLimit)
-			for i := range podIds {
-				podIds[i] = podCounter + i
+			podIDs := make([]int, listPageLimit)
+			for i := range podIDs {
+				podIDs[i] = podCounter + i
 			}
 			podCounter += listPageLimit
 			mu.Unlock()
@@ -142,7 +142,7 @@ func TestRunRateLimitsJanitorPaginatedResourceListRequests(t *testing.T) {
 			if requestCount < podCount {
 				nextContinueToken = fmt.Sprintf("page-%d", requestCount)
 			}
-			_, _ = w.Write([]byte(podListJSON(nextContinueToken, includedNamespaces, ignoredNamespace, podIds, ttlThreshold)))
+			_, _ = w.Write([]byte(podListJSON(nextContinueToken, includedNamespaces, ignoredNamespace, podIDs, ttlThreshold)))
 		case r.Method == http.MethodDelete && podDeletePath.MatchString(r.URL.Path):
 			match := podDeletePath.FindStringSubmatch(r.URL.Path)
 			mu.Lock()
@@ -257,17 +257,17 @@ users:
 	return kubeconfig
 }
 
-func podListJSON(continueToken string, includedNamespaces []string, ignoredNamespace string, podIds []int, ttlThreshold int) string {
-	items := make([]string, 0, len(podIds))
-	for _, podId := range podIds {
+func podListJSON(continueToken string, includedNamespaces []string, ignoredNamespace string, podIDs []int, ttlThreshold int) string {
+	items := make([]string, 0, len(podIDs))
+	for _, podID := range podIDs {
 		var namespace string
-		if podId%10 == 0 {
+		if podID%10 == 0 {
 			namespace = ignoredNamespace
 		} else {
-			namespace = includedNamespaces[podId%len(includedNamespaces)]
+			namespace = includedNamespaces[podID%len(includedNamespaces)]
 		}
 		ttl := "100w"
-		if podId >= ttlThreshold {
+		if podID >= ttlThreshold {
 			ttl = "1ns"
 		}
 		items = append(items, fmt.Sprintf(`{
@@ -279,7 +279,7 @@ func podListJSON(continueToken string, includedNamespaces []string, ignoredNames
 				"creationTimestamp": "2026-01-01T00:00:00Z",
 				"annotations": {"janitor/ttl": %q}
 			}
-		}`, podId, namespace, ttl))
+		}`, podID, namespace, ttl))
 	}
 
 	return fmt.Sprintf(`{
