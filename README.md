@@ -348,6 +348,7 @@ kube-janitor-go exposes Prometheus metrics on the `/metrics` endpoint:
 - `kube_janitor_resources_deleted_total`: Total number of resources deleted
 - `kube_janitor_resources_evaluated_total`: Total number of resources evaluated
 - `kube_janitor_cleanup_duration_seconds`: Histogram of cleanup run durations
+- `kube_janitor_ttl_deletion_lag_seconds`: Histogram of delay between TTL expiration time and successful resource deletion
 - `kube_janitor_errors_total`: Total number of errors encountered
 
 ## Events

@@ -17,7 +17,7 @@ var (
 			Name: "kube_janitor_resources_deleted_total",
 			Help: "Total number of resources deleted",
 		},
-		[]string{"resource", "namespace", "reason"},
+		[]string{"resource", "reason"},
 	)
 
 	// ResourcesEvaluated is a counter for evaluated resources
@@ -26,7 +26,7 @@ var (
 			Name: "kube_janitor_resources_evaluated_total",
 			Help: "Total number of resources evaluated",
 		},
-		[]string{"resource", "namespace"},
+		[]string{"resource"},
 	)
 
 	// CleanupDuration is a histogram for cleanup run durations
@@ -36,6 +36,16 @@ var (
 			Help:    "Histogram of cleanup run durations",
 			Buckets: prometheus.DefBuckets,
 		},
+	)
+
+	// TTLDeletionLag is a histogram for the delay between TTL expiry and deletion
+	TTLDeletionLag = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kube_janitor_ttl_deletion_lag_seconds",
+			Help:    "Histogram of delay between TTL expiration time and successful resource deletion",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 20),
+		},
+		[]string{"resource", "reason"},
 	)
 
 	// Errors is a counter for errors
@@ -53,6 +63,7 @@ func init() {
 	prometheus.MustRegister(ResourcesDeleted)
 	prometheus.MustRegister(ResourcesEvaluated)
 	prometheus.MustRegister(CleanupDuration)
+	prometheus.MustRegister(TTLDeletionLag)
 	prometheus.MustRegister(Errors)
 }
 

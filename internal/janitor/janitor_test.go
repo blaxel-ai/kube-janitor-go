@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaxel-ai/kube-janitor-go/internal/metrics"
+	"github.com/blaxel-ai/kube-janitor-go/internal/rules"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -67,13 +71,61 @@ func TestParseExpirationTime(t *testing.T) {
 
 func TestShouldDelete(t *testing.T) {
 	now := time.Now()
+	ruleEngine, err := rules.New([]rules.Rule{
+		{
+			ID:         "cleanup-test-pods",
+			Resources:  []string{"pods"},
+			Expression: `object.metadata.name == "rule-pod"`,
+			TTL:        "1h",
+		},
+	})
+	require.NoError(t, err)
 
 	tests := []struct {
-		name       string
-		obj        *unstructured.Unstructured
-		wantDelete bool
-		wantReason string
+		name                string
+		obj                 *unstructured.Unstructured
+		ruleEngine          *rules.Engine
+		wantDelete          bool
+		wantReason          string
+		wantDetailedMessage string
+		wantTTLDeadline     bool
 	}{
+		{
+			name: "Delete-if-max-age expired",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name":              "test-pod",
+						"creationTimestamp": now.Add(-2 * time.Hour).Format(time.RFC3339),
+						"annotations": map[string]interface{}{
+							annotationDeleteIfMaxAge: "1h",
+						},
+					},
+				},
+			},
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfMaxAge,
+			wantDetailedMessage: "Delete max-age policy triggered",
+			wantTTLDeadline:     true,
+		},
+		{
+			name: "Delete-if-idle expired",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfIdle: "30m",
+							annotationLastUsedAt:   now.Add(-1 * time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfIdle,
+			wantDetailedMessage: "Delete idle policy triggered",
+			wantTTLDeadline:     true,
+		},
 		{
 			name: "TTL expired",
 			obj: &unstructured.Unstructured{
@@ -87,8 +139,27 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "TTL expired",
+			wantDelete:          true,
+			wantReason:          deletionReasonLegacyTTL,
+			wantDetailedMessage: "TTL expired",
+			wantTTLDeadline:     true,
+		},
+		{
+			name: "Rule TTL expired",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"kind": "Pod",
+					"metadata": map[string]interface{}{
+						"name":              "rule-pod",
+						"creationTimestamp": now.Add(-2 * time.Hour).Format(time.RFC3339),
+					},
+				},
+			},
+			ruleEngine:          ruleEngine,
+			wantDelete:          true,
+			wantReason:          deletionReasonRuleTTL,
+			wantDetailedMessage: "Rule 'cleanup-test-pods' matched",
+			wantTTLDeadline:     true,
 		},
 		{
 			name: "TTL not expired",
@@ -132,8 +203,9 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "Legacy expiration time reached",
+			wantDelete:          true,
+			wantReason:          deletionReasonLegacyExpires,
+			wantDetailedMessage: "Legacy expiration time reached",
 		},
 		{
 			name: "Expiration time not reached",
@@ -161,8 +233,9 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "Delete date policy triggered",
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfDate,
+			wantDetailedMessage: "Delete date policy triggered",
 		},
 		{
 			name: "Delete-if-date time not reached",
@@ -190,8 +263,9 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "Delete date policy triggered",
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfDate,
+			wantDetailedMessage: "Delete date policy triggered",
 		},
 		{
 			name: "Delete-if-date with -0 suffix",
@@ -205,8 +279,9 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "Delete date policy triggered",
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfDate,
+			wantDetailedMessage: "Delete date policy triggered",
 		},
 		{
 			name: "Delete-if-date-0 with exact format from user",
@@ -234,8 +309,9 @@ func TestShouldDelete(t *testing.T) {
 					},
 				},
 			},
-			wantDelete: true,
-			wantReason: "Delete date policy triggered",
+			wantDelete:          true,
+			wantReason:          deletionReasonDeleteIfDate,
+			wantDetailedMessage: "Delete date policy triggered",
 		},
 		{
 			name: "Archive-if-date annotation (mock - should not delete)",
@@ -266,11 +342,19 @@ func TestShouldDelete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			j := &Janitor{}
-			gotDelete, gotReason := j.shouldDelete(tt.obj)
-			assert.Equal(t, tt.wantDelete, gotDelete)
+			j := &Janitor{RuleEngine: tt.ruleEngine}
+			gotDecision := j.shouldDelete(tt.obj)
+			assert.Equal(t, tt.wantDelete, gotDecision.shouldDelete)
 			if tt.wantDelete && tt.wantReason != "" {
-				assert.Contains(t, gotReason, tt.wantReason)
+				assert.Equal(t, tt.wantReason, gotDecision.reason)
+				assert.Contains(t, gotDecision.detailedMessage, tt.wantDetailedMessage)
+				assert.NotContains(t, gotDecision.detailedMessage, gotDecision.reason,
+					"bounded metric reason should not be reused as the detailed human-readable message")
+				assert.Equal(t, tt.wantTTLDeadline, !gotDecision.ttlDeadline.IsZero())
+			} else {
+				assert.Empty(t, gotDecision.reason)
+				assert.Empty(t, gotDecision.detailedMessage)
+				assert.True(t, gotDecision.ttlDeadline.IsZero())
 			}
 		})
 	}
@@ -332,8 +416,10 @@ func TestProcessItem(t *testing.T) {
 		Obj:       pod,
 	}
 
+	ttlLagSamplesBefore := ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL)
 	j.processItem(ctx, item)
 	assert.True(t, deleteCalled, "Delete should have been called")
+	assert.Equal(t, ttlLagSamplesBefore+1, ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL))
 }
 
 func TestProcessItemDryRun(t *testing.T) {
@@ -392,8 +478,44 @@ func TestProcessItemDryRun(t *testing.T) {
 		Obj:       pod,
 	}
 
+	ttlLagSamplesBefore := ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL)
 	j.processItem(ctx, item)
 	assert.False(t, deleteCalled, "Delete should not have been called in dry-run mode")
+	assert.Equal(t, ttlLagSamplesBefore, ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL))
+}
+
+func ttlDeletionLagSampleCount(t *testing.T, resource, reason string) uint64 {
+	t.Helper()
+
+	collected := make(chan prometheus.Metric)
+	go func() {
+		metrics.TTLDeletionLag.Collect(collected)
+		close(collected)
+	}()
+
+	var count uint64
+	for metric := range collected {
+		var dtoMetric dto.Metric
+		require.NoError(t, metric.Write(&dtoMetric))
+		if metricHasLabels(&dtoMetric, map[string]string{
+			"resource": resource,
+			"reason":   reason,
+		}) {
+			count += dtoMetric.GetHistogram().GetSampleCount()
+		}
+	}
+	return count
+}
+
+func metricHasLabels(metric *dto.Metric, labels map[string]string) bool {
+	matched := 0
+	for _, label := range metric.GetLabel() {
+		want, ok := labels[label.GetName()]
+		if ok && label.GetValue() == want {
+			matched++
+		}
+	}
+	return matched == len(labels)
 }
 
 func TestGetNamespaces(t *testing.T) {
