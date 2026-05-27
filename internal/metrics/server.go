@@ -11,6 +11,10 @@ import (
 )
 
 var (
+	// CleanupDurationBuckets cover cleanup runs from small clusters through
+	// large clusters where a full sweep can take many minutes.
+	CleanupDurationBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800}
+
 	// ResourcesDeleted is a counter for deleted resources
 	ResourcesDeleted = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -34,7 +38,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "kube_janitor_cleanup_duration_seconds",
 			Help:    "Histogram of cleanup run durations",
-			Buckets: prometheus.DefBuckets,
+			Buckets: CleanupDurationBuckets,
 		},
 	)
 
