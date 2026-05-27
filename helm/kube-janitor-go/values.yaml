@@ -30,7 +30,10 @@ serviceAccount:
   name: ""
 
 # Pod annotations
-podAnnotations: {}
+podAnnotations:
+  signoz.io/path: "/metrics"
+  signoz.io/port: "8080"
+  signoz.io/scrape: "true"
 
 # Pod security context
 podSecurityContext: {}
