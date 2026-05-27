@@ -140,7 +140,7 @@ func TestMetricsIncrement(t *testing.T) {
 		prometheus.HistogramOpts{
 			Name:    "kube_janitor_cleanup_duration_seconds_test",
 			Help:    "Histogram of cleanup run durations",
-			Buckets: prometheus.DefBuckets,
+			Buckets: CleanupDurationBuckets,
 		},
 	)
 	TTLDeletionLag = prometheus.NewHistogramVec(
