@@ -371,6 +371,7 @@ func TestProcessItem(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-pod",
 				"namespace": "default",
+				"uid":       "test-pod-uid",
 				"annotations": map[string]interface{}{
 					annotationTTL: "0s", // Expired immediately
 				},
@@ -420,6 +421,23 @@ func TestProcessItem(t *testing.T) {
 	j.processItem(ctx, item)
 	assert.True(t, deleteCalled, "Delete should have been called")
 	assert.Equal(t, ttlLagSamplesBefore+1, ttlDeletionLagSampleCount(t, item.Resource.Resource, deletionReasonLegacyTTL))
+}
+
+func TestDeleteOptionsForObjectUsesUIDPrecondition(t *testing.T) {
+	pod := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name": "test-pod",
+				"uid":  "test-pod-uid",
+			},
+		},
+	}
+
+	deleteOptions := deleteOptionsForObject(pod)
+
+	require.NotNil(t, deleteOptions.Preconditions)
+	require.NotNil(t, deleteOptions.Preconditions.UID)
+	assert.Equal(t, pod.GetUID(), *deleteOptions.Preconditions.UID)
 }
 
 func TestProcessItemDryRun(t *testing.T) {
