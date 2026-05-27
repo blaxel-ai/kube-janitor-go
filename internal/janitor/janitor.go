@@ -357,7 +357,7 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 		resourceInterface = j.DynamicClient.Resource(item.Resource)
 	}
 
-	err := resourceInterface.Delete(ctx, item.Name, metav1.DeleteOptions{})
+	err := resourceInterface.Delete(ctx, item.Name, deleteOptionsForObject(item.Obj))
 	if err != nil {
 		logger.WithError(err).Error("Failed to delete resource")
 		metrics.Errors.WithLabelValues("delete_resource").Inc()
@@ -382,6 +382,15 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	eventMessage := fmt.Sprintf("Deleted %s %s/%s - %s",
 		item.Resource.Resource, item.Namespace, item.Name, decision.detailedMessage)
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
+}
+
+func deleteOptionsForObject(obj *unstructured.Unstructured) metav1.DeleteOptions {
+	uid := obj.GetUID()
+	return metav1.DeleteOptions{
+		Preconditions: &metav1.Preconditions{
+			UID: &uid,
+		},
+	}
 }
 
 // evaluateDeleteIfMaxAge checks if resource should be deleted based on max age
