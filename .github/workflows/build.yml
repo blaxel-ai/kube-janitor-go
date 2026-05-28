@@ -72,19 +72,26 @@ jobs:
       - name: Set image tags
         id: set-tags
         run: |
+          # Tag the image using an abbreviated (8-character) commit hash of build head.
+          echo "GHCR_COMMIT_TAG=ghcr.io/${{ github.repository }}:${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+          # Also tag it with either 'latest' or 'latest-preview',
+          # although these tags should not be used in production because they make rolling back more complicated.
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "GHCR_TAG=ghcr.io/${{ github.repository }}:latest" >> $GITHUB_OUTPUT
+            echo "GHCR_LATEST_TAG=ghcr.io/${{ github.repository }}:latest" >> $GITHUB_OUTPUT
           else
-            echo "GHCR_TAG=ghcr.io/${{ github.repository }}:latest-preview" >> $GITHUB_OUTPUT
+            echo "GHCR_LATEST_TAG=ghcr.io/${{ github.repository }}:latest-preview" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.set-tags.outputs.GHCR_TAG }}
+          tags: |
+            ${{ steps.set-tags.outputs.GHCR_COMMIT_TAG }}
+            ${{ steps.set-tags.outputs.GHCR_LATEST_TAG }}
           build-args: |
             VERSION=${{ github.sha }}
 
