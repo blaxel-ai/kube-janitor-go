@@ -3,7 +3,7 @@ entries:
   kube-janitor-go:
   - apiVersion: v2
     appVersion: 1.0.5
-    created: "2026-05-27T03:31:29.665616653Z"
+    created: "2026-05-28T01:53:30.284543739Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 4dd77ac746213743bd8b7a4be8adcf6e2347bfe2ae06390a70cceff37adca16b
@@ -29,7 +29,7 @@ entries:
     version: 1.0.5
   - apiVersion: v2
     appVersion: 1.0.4
-    created: "2026-05-27T03:31:29.66481874Z"
+    created: "2026-05-28T01:53:30.283714186Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 175dbd360f73eafcda86d688191ae29bd26e7b911d0c57a92a0d66024e905295
@@ -55,7 +55,7 @@ entries:
     version: 1.0.4
   - apiVersion: v2
     appVersion: 1.0.3
-    created: "2026-05-27T03:31:29.664017934Z"
+    created: "2026-05-28T01:53:30.282822737Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 06fe63041ecb76c6f231bb269b16116e4565303d30a1b5b16429bc15717e2583
@@ -81,7 +81,7 @@ entries:
     version: 1.0.3
   - apiVersion: v2
     appVersion: 1.0.2
-    created: "2026-05-27T03:31:29.66313777Z"
+    created: "2026-05-28T01:53:30.280889144Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 4d7929e48ce3e8ea1ce6d6b78979f41f859d5e8f86cef92d5cdf8b03e7cdd6d8
@@ -107,7 +107,7 @@ entries:
     version: 1.0.2
   - apiVersion: v2
     appVersion: 1.0.1
-    created: "2026-05-27T03:31:29.662316523Z"
+    created: "2026-05-28T01:53:30.28008074Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: cb8f5df9381745c7336a63be8d3fc7f0d36dd186a38d5d54c3999120b3354be4
@@ -133,7 +133,7 @@ entries:
     version: 1.0.1
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.661494384Z"
+    created: "2026-05-28T01:53:30.279296973Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: f967b1b48fc01b624b107d199ab3ddc9587ef1a03c4da6fcf9056b5708bbb208
@@ -159,7 +159,33 @@ entries:
     version: 0.1.0
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.66060754Z"
+    created: "2026-05-28T01:53:30.278464654Z"
+    description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
+      after a configured TTL
+    digest: 93f41d12abffbb177e1e44a1d4a3a797364446defb24e980afdaffecb5e91a7e
+    home: https://github.com/blaxel-ai/kube-janitor-go
+    icon: https://raw.githubusercontent.com/blaxel-ai/kube-janitor-go/main/logo.png
+    keywords:
+    - kubernetes
+    - janitor
+    - cleanup
+    - ttl
+    - garbage-collection
+    - resource-management
+    maintainers:
+    - email: support@blaxel.ai
+      name: Blaxel AI
+      url: https://blaxel.ai
+    name: kube-janitor-go
+    sources:
+    - https://github.com/blaxel-ai/kube-janitor-go
+    type: application
+    urls:
+    - https://blaxel-ai.github.io/kube-janitor-go/kube-janitor-go-0.1.0-dev.20260528015327.tgz
+    version: 0.1.0-dev.20260528015327
+  - apiVersion: v2
+    appVersion: latest
+    created: "2026-05-28T01:53:30.277594104Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 61f90c44ee6db996c6a594469d58c1c35e42bf89a955a5e8fb0ef6b2c0a7cdba
@@ -185,7 +211,7 @@ entries:
     version: 0.1.0-dev.20260527033125
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.659730651Z"
+    created: "2026-05-28T01:53:30.276730357Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 3f34cc0c8a1f8622d440a0a12a7b95908b9406a1a728ea5617b5f7641bb78240
@@ -211,7 +237,7 @@ entries:
     version: 0.1.0-dev.20260522222446
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.657864571Z"
+    created: "2026-05-28T01:53:30.275900604Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 0df010252f22c373d5660521a49cd6762eea67ea0739b0d64b2bad2959134e95
@@ -237,7 +263,7 @@ entries:
     version: 0.1.0-dev.20260521170836
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.657018257Z"
+    created: "2026-05-28T01:53:30.275046074Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: e4b2a19a6423f90ec8bcdb7e9ed10b2f96d9fda2808dc6732ca8d61c824039fc
@@ -263,7 +289,7 @@ entries:
     version: 0.1.0-dev.20260520171821
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.65616994Z"
+    created: "2026-05-28T01:53:30.273547132Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5ebbc48c923ec6e9fd63db9ee66208b7ac0ca7fc2fee74efa320ebb5fece0a53
@@ -289,7 +315,7 @@ entries:
     version: 0.1.0-dev.20260519225711
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.655375172Z"
+    created: "2026-05-28T01:53:30.272554559Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 552e143cb88e8ed8946fe63df0e35e5f9752d77f16b2df82084da89e5ba0db71
@@ -315,7 +341,7 @@ entries:
     version: 0.1.0-dev.20260519212607
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.654562638Z"
+    created: "2026-05-28T01:53:30.271707954Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 7f7cdf02dedb142b4497728ca96a82dbd403ef89a0822d0479163636c3fcbf5f
@@ -341,7 +367,7 @@ entries:
     version: 0.1.0-dev.20250915175137
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.653737716Z"
+    created: "2026-05-28T01:53:30.270821464Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 636c34f10a6250c8d584e3a4acceaee7aea3d1d9a4f2be882c7d03b37440be25
@@ -367,7 +393,7 @@ entries:
     version: 0.1.0-dev.20250915134947
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.652859675Z"
+    created: "2026-05-28T01:53:30.269992762Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: d1043179cc4b3ed1c786a09a91264b0aaf8f2f631f909e5aa96be51c929cef77
@@ -393,7 +419,7 @@ entries:
     version: 0.1.0-dev.20250915124925
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.651977688Z"
+    created: "2026-05-28T01:53:30.269181804Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: d50d7d9391c16c178f0892d1bd70d1b4b33a15a7baf68725e1c8cc0b9b8d5b3a
@@ -419,7 +445,7 @@ entries:
     version: 0.1.0-dev.20250915100423
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.650192648Z"
+    created: "2026-05-28T01:53:30.268312646Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 9f43334d3383a7a26643d84ad408bc8ec302274ef8ea3802251435066f44e5f7
@@ -445,7 +471,7 @@ entries:
     version: 0.1.0-dev.20250804203325
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.649388987Z"
+    created: "2026-05-28T01:53:30.267416288Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5bfe86e39251b8daabdb0dd0fe70867b1fd4b55320e8f12b1645d4d79c777bc1
@@ -471,7 +497,7 @@ entries:
     version: 0.1.0-dev.20250715184407
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.648512298Z"
+    created: "2026-05-28T01:53:30.266176199Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5df830f7f4b403bcf6af9e7f6f76685649e7a4b07966f0b9d0c2659fe60775b7
@@ -497,7 +523,7 @@ entries:
     version: 0.1.0-dev.20250715035550
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.647667987Z"
+    created: "2026-05-28T01:53:30.264528965Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 4ee7e77c0238dc5523ea0258d005a8943203a0cdd270590628af5ceda6639874
@@ -523,7 +549,7 @@ entries:
     version: 0.1.0-dev.20250713213129
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.646807431Z"
+    created: "2026-05-28T01:53:30.263702097Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 971d397630990c132c1928b508c0cbec8ead45071a356f3668a153f0b908cf58
@@ -549,7 +575,7 @@ entries:
     version: 0.1.0-dev.20250713212106
   - apiVersion: v2
     appVersion: latest
-    created: "2026-05-27T03:31:29.645927908Z"
+    created: "2026-05-28T01:53:30.262822079Z"
     description: A Helm chart for kube-janitor-go - Clean up Kubernetes resources
       after a configured TTL
     digest: 5a2d7ea28a15a115d1181feaa445749898cb86f1feef07a87728c96b73e740f5
@@ -573,4 +599,4 @@ entries:
     urls:
     - https://blaxel-ai.github.io/kube-janitor-go/kube-janitor-go-0.1.0-dev.20250713184928.tgz
     version: 0.1.0-dev.20250713184928
-generated: "2026-05-27T03:31:29.644843381Z"
+generated: "2026-05-28T01:53:30.261757876Z"
