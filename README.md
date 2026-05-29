@@ -264,6 +264,7 @@ Flags:
       --max-workers int             Maximum number of concurrent workers (default 10)
       --kube-api-qps float32        Kubernetes API client QPS limit (set 0 to use client-go default) (default 25)
       --kube-api-burst int          Kubernetes API client burst limit (set 0 to use 2x QPS when QPS is set, otherwise client-go default) (default 50)
+      --list-page-limit int         Maximum number of resources to request per paginated Kubernetes list call (default 100)
   -h, --help                        help for kube-janitor-go
 ```
 

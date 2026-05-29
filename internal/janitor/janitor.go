@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -70,6 +71,7 @@ type Config struct {
 	ExcludeNamespaces []string
 	RulesFile         string
 	MaxWorkers        int
+	ListPageLimit     int64
 }
 
 // Janitor is the main cleanup controller
@@ -139,7 +141,7 @@ func New(clientset kubernetes.Interface, restConfig *rest.Config, config Config)
 		Config:          config,
 		RuleEngine:      ruleEngine,
 		ResourceFilter:  resourceFilter,
-		WorkQueue:       make(chan WorkItem, 1000),
+		WorkQueue:       make(chan WorkItem, 2000),
 		wg:              sync.WaitGroup{},
 		EventRecorder:   recorder,
 	}, nil
@@ -232,34 +234,9 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 				Resource: resource.Name,
 			}
 
-			// Process namespaced resources
-			if resource.Namespaced {
-				namespaces, err := j.getNamespaces(ctx)
-				if err != nil {
-					logrus.WithError(err).Error("Failed to list namespaces")
-					metrics.Errors.WithLabelValues("list_namespaces").Inc()
-					continue
-				}
-
-				for _, ns := range namespaces {
-					if !j.ResourceFilter.ShouldProcessNamespace(ns) {
-						continue
-					}
-
-					if err := j.processResources(ctx, gvr, ns); err != nil {
-						logrus.WithError(err).WithFields(logrus.Fields{
-							"resource":  resource.Name,
-							"namespace": ns,
-						}).Error("Failed to process resources")
-						metrics.Errors.WithLabelValues("process_resources").Inc()
-					}
-				}
-			} else {
-				// Process cluster-scoped resources
-				if err := j.processResources(ctx, gvr, ""); err != nil {
-					logrus.WithError(err).WithField("resource", resource.Name).Error("Failed to process resources")
-					metrics.Errors.WithLabelValues("process_resources").Inc()
-				}
+			if err := j.processResources(ctx, gvr, resource.Namespaced); err != nil {
+				logrus.WithError(err).WithField("resource", resource.Name).Error("Failed to process resources")
+				metrics.Errors.WithLabelValues("process_resources").Inc()
 			}
 		}
 	}
@@ -268,33 +245,46 @@ func (j *Janitor) cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionResource, namespace string) error {
-	var resourceInterface dynamic.ResourceInterface
-	if namespace != "" {
-		resourceInterface = j.DynamicClient.Resource(gvr).Namespace(namespace)
-	} else {
-		resourceInterface = j.DynamicClient.Resource(gvr)
-	}
+func (j *Janitor) processResources(ctx context.Context, gvr schema.GroupVersionResource, namespaced bool) error {
+	resourceInterface := j.DynamicClient.Resource(gvr)
+	listOptions := metav1.ListOptions{Limit: j.Config.ListPageLimit}
+	restartedAfterExpiry := false
 
-	list, err := resourceInterface.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	for _, item := range list.Items {
-		obj := item
-		// Track evaluated resources
-		metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource).Inc()
-
-		j.WorkQueue <- WorkItem{
-			Resource:  gvr,
-			Namespace: namespace,
-			Name:      obj.GetName(),
-			Obj:       &obj,
+	for {
+		list, err := resourceInterface.List(ctx, listOptions)
+		if err != nil {
+			if apierrors.IsResourceExpired(err) && !restartedAfterExpiry {
+				logrus.WithError(err).WithField("resource", gvr.Resource).Warn("Continue token expired, restarting paginated list")
+				listOptions.Continue = ""
+				restartedAfterExpiry = true
+				continue
+			}
+			return err
 		}
-	}
 
-	return nil
+		for _, item := range list.Items {
+			obj := item
+			namespace := obj.GetNamespace()
+			if namespaced && !j.ResourceFilter.ShouldProcessNamespace(namespace) {
+				continue
+			}
+
+			// Track evaluated resources without namespace/workspace labels to keep metric cardinality bounded.
+			metrics.ResourcesEvaluated.WithLabelValues(gvr.Resource).Inc()
+
+			j.WorkQueue <- WorkItem{
+				Resource:  gvr,
+				Namespace: namespace,
+				Name:      obj.GetName(),
+				Obj:       &obj,
+			}
+		}
+
+		if list.GetContinue() == "" {
+			return nil
+		}
+		listOptions.Continue = list.GetContinue()
+	}
 }
 
 func (j *Janitor) worker(ctx context.Context) {
@@ -749,17 +739,24 @@ func (j *Janitor) shouldDelete(obj *unstructured.Unstructured) deletionDecision 
 }
 
 func (j *Janitor) getNamespaces(ctx context.Context) ([]string, error) {
-	namespaceList, err := j.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
+	var namespaces []string
+	listOptions := metav1.ListOptions{Limit: j.Config.ListPageLimit}
 
-	namespaces := make([]string, 0, len(namespaceList.Items))
-	for _, ns := range namespaceList.Items {
-		namespaces = append(namespaces, ns.Name)
-	}
+	for {
+		namespaceList, err := j.Clientset.CoreV1().Namespaces().List(ctx, listOptions)
+		if err != nil {
+			return nil, err
+		}
 
-	return namespaces, nil
+		for _, ns := range namespaceList.Items {
+			namespaces = append(namespaces, ns.Name)
+		}
+
+		if namespaceList.GetContinue() == "" {
+			return namespaces, nil
+		}
+		listOptions.Continue = namespaceList.GetContinue()
+	}
 }
 
 func parseExpirationTime(expires string) (time.Time, error) {
