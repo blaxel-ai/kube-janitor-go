@@ -1,0 +1,70 @@
+name: Dependency verification
+
+# Gate for dependency-bump PRs only: this must not become a mandatory job on
+# every unrelated PR in the repo. GitHub has no title filter in `on:`, so the
+# job itself is gated with `if:` below.
+#
+# Neither of this repo's existing workflows triggers on pull_request:
+# test.yml runs on push to any branch except main/develop, and build.yml
+# runs on push to main/develop only. Neither posts a check on a PR. This
+# workflow fills that gap.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**/*.go"
+      - ".github/workflows/dependency-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    # Dependency PRs only: this remediation, Dependabot's own PRs, or an explicit label.
+    if: >-
+      contains(github.event.pull_request.title, 'Dependabot') ||
+      startsWith(github.event.pull_request.title, 'chore(deps)') ||
+      startsWith(github.head_ref, 'cploujoux/devin/dependabot-') ||
+      startsWith(github.head_ref, 'dependabot/') ||
+      contains(github.event.pull_request.labels.*.name, 'dependencies') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25" # matches go.mod's `go 1.25.0` directive
+
+      - name: Build
+        run: go build -v ./cmd/...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      # Informational only, not blocking: golangci-lint@latest (what
+      # `make install-tools` installs) is now a v2.x release whose config
+      # schema this repo's .golangci.yml (no `version:` key, v1-style) does
+      # not satisfy -- "can't load config: unsupported version of the
+      # configuration". Reproduced against the unmodified base branch, so
+      # this predates this PR and affects `make lint` in build.yml too, not
+      # just this new job. Fix (migrate .golangci.yml to the v2 schema, or
+      # pin golangci-lint to a v1.x release) is a separate follow-up.
+      - name: Lint (informational)
+        continue-on-error: true
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m ./...
