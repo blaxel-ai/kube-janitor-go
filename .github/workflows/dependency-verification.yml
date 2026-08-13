@@ -1,0 +1,77 @@
+name: Dependency verification
+
+# Gate for dependency-bump PRs only: this must not become a mandatory job on
+# every unrelated PR in the repo. GitHub has no title filter in `on:`, so the
+# job itself is gated with `if:` below.
+#
+# Neither of this repo's existing workflows triggers on pull_request:
+# test.yml runs on push to any branch except main/develop, and build.yml
+# runs on push to main/develop only. Neither posts a check on a PR. This
+# workflow fills that gap.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**/*.go"
+      - ".github/workflows/dependency-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    # Dependency PRs only: this remediation, Dependabot's own PRs, or an explicit label.
+    if: >-
+      contains(github.event.pull_request.title, 'Dependabot') ||
+      startsWith(github.event.pull_request.title, 'chore(deps)') ||
+      startsWith(github.head_ref, 'cploujoux/devin/dependabot-') ||
+      startsWith(github.head_ref, 'dependabot/') ||
+      contains(github.event.pull_request.labels.*.name, 'dependencies') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25" # matches go.mod's `go 1.25.0` directive
+
+      - name: Build
+        run: go build -v ./cmd/...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      # A prior pass reported this as "informational only, non-blocking"
+      # after seeing an already-installed local golangci-lint v2.10.1
+      # binary fail this repo's v1-style .golangci.yml (no `version:` key)
+      # with "can't load config: unsupported version of the configuration".
+      # Re-verified from a clean GOPATH/GOBIN (matching what a CI runner
+      # and `make install-tools` actually do): `go install
+      # .../golangci-lint@latest` on this import path (no /v2 suffix)
+      # resolves to v1.64.8 -- golangci-lint's v2 line lives under the
+      # go.mod-versioned github.com/golangci/golangci-lint/v2 module path,
+      # which Go's module resolution correctly excludes from `@latest` on
+      # the unsuffixed path. v1.64.8 loads this repo's config and exits 0
+      # with no findings. The earlier "pre-existing break" was therefore a
+      # stale local binary, not what this workflow (or `make lint` in
+      # build.yml) actually runs. Pinned to the exact version verified above
+      # so this step's own supply chain is reproducible, and made blocking
+      # since it genuinely passes.
+      - name: Lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          golangci-lint run --timeout=5m ./...
