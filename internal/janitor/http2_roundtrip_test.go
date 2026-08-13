@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -37,11 +38,11 @@ import (
 // New() itself constructs) -- not through the fake in-memory clientsets
 // the rest of this package's tests use, which never touch the network.
 func TestJanitorNew_HTTP2RoundTrip(t *testing.T) {
-	var sawHTTP2 bool
+	var sawHTTP2 atomic.Bool
 
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor == 2 {
-			sawHTTP2 = true
+			sawHTTP2.Store(true)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -92,5 +93,5 @@ func TestJanitorNew_HTTP2RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "v1.31.0-fake", info.GitVersion)
 
-	require.True(t, sawHTTP2, "fake API server never saw an HTTP/2 request; the client-go transport this repo relies on (golang.org/x/net/http2) was not exercised")
+	require.True(t, sawHTTP2.Load(), "fake API server never saw an HTTP/2 request; the client-go transport this repo relies on (golang.org/x/net/http2) was not exercised")
 }
