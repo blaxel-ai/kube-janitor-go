@@ -131,6 +131,8 @@ spec:
 
 **Important**: If the `lastUsedAt` annotation is not present, idle policies are ignored (not treated as an error).
 
+If the resource has the annotation `state: RUNNING`, idle policies are skipped and the resource is never deleted for being idle.
+
 ##### Multiple Rules Support
 You can define multiple rules of the same type using numbered suffixes, or combine different policy types:
 
