@@ -351,7 +351,12 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 		resourceInterface = j.DynamicClient.Resource(item.Resource)
 	}
 
-	err := resourceInterface.Delete(ctx, item.Name, deleteOptionsForObject(item.Obj))
+	err := resourceInterface.Delete(ctx, item.Name, deleteOptionsForObject(item.Obj, decision.reason))
+	if apierrors.IsConflict(err) {
+		// The object changed since it was listed (e.g. state switched to RUNNING); the next pass re-evaluates it
+		logger.WithError(err).Info("Skipped deletion: resource changed since listing")
+		return
+	}
 	if err != nil {
 		logger.WithError(err).Error("Failed to delete resource")
 		metrics.Errors.WithLabelValues("delete_resource").Inc()
@@ -378,13 +383,18 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
 }
 
-func deleteOptionsForObject(obj *unstructured.Unstructured) metav1.DeleteOptions {
+func deleteOptionsForObject(obj *unstructured.Unstructured, reason string) metav1.DeleteOptions {
 	uid := obj.GetUID()
-	return metav1.DeleteOptions{
-		Preconditions: &metav1.Preconditions{
-			UID: &uid,
-		},
+	preconditions := &metav1.Preconditions{UID: &uid}
+	// Idle decisions depend on mutable annotations (state, lastUsedAt): pin the listed
+	// version so a resource that became RUNNING after listing is not deleted.
+	// Other policies keep the UID-only precondition so frequent status updates cannot starve them.
+	if reason == deletionReasonDeleteIfIdle {
+		if rv := obj.GetResourceVersion(); rv != "" {
+			preconditions.ResourceVersion = &rv
+		}
 	}
+	return metav1.DeleteOptions{Preconditions: preconditions}
 }
 
 // evaluateDeleteIfMaxAge checks if resource should be deleted based on max age

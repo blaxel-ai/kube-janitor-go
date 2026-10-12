@@ -443,17 +443,23 @@ func TestDeleteOptionsForObjectUsesUIDPrecondition(t *testing.T) {
 	pod := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"metadata": map[string]interface{}{
-				"name": "test-pod",
-				"uid":  "test-pod-uid",
+				"name":            "test-pod",
+				"uid":             "test-pod-uid",
+				"resourceVersion": "42",
 			},
 		},
 	}
 
-	deleteOptions := deleteOptionsForObject(pod)
+	deleteOptions := deleteOptionsForObject(pod, deletionReasonDeleteIfMaxAge)
 
 	require.NotNil(t, deleteOptions.Preconditions)
 	require.NotNil(t, deleteOptions.Preconditions.UID)
 	assert.Equal(t, pod.GetUID(), *deleteOptions.Preconditions.UID)
+	assert.Nil(t, deleteOptions.Preconditions.ResourceVersion)
+
+	idleOptions := deleteOptionsForObject(pod, deletionReasonDeleteIfIdle)
+	require.NotNil(t, idleOptions.Preconditions.ResourceVersion)
+	assert.Equal(t, "42", *idleOptions.Preconditions.ResourceVersion)
 }
 
 func TestProcessItemDryRun(t *testing.T) {
