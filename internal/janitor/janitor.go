@@ -43,6 +43,11 @@ const (
 
 	// Timestamp annotations
 	annotationLastUsedAt = "lastUsedAt"
+
+	// annotationState carries the instance state; a RUNNING instance is in
+	// use whatever its lastUsedAt, so idle policies never delete it.
+	annotationState = "state"
+	stateRunning    = "RUNNING"
 )
 
 // Action constants
@@ -348,6 +353,22 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	}
 
 	err := resourceInterface.Delete(ctx, item.Name, deleteOptionsForObject(item.Obj))
+	if apierrors.IsConflict(err) {
+		// The object changed since it was listed (e.g. the instance started):
+		// decide again on its current version.
+		var retry bool
+		decision, retry, err = j.reevaluate(ctx, resourceInterface, item)
+		if !retry {
+			return
+		}
+		if err == nil {
+			err = resourceInterface.Delete(ctx, item.Name, deleteOptionsForObject(item.Obj))
+		}
+		if apierrors.IsConflict(err) {
+			logger.Debug("Resource changed again before deletion, retrying next run")
+			return
+		}
+	}
 	if err != nil {
 		logger.WithError(err).Error("Failed to delete resource")
 		metrics.Errors.WithLabelValues("delete_resource").Inc()
@@ -374,13 +395,42 @@ func (j *Janitor) processItem(ctx context.Context, item WorkItem) {
 	j.EventRecorder.Event(ref, corev1.EventTypeNormal, "ResourceDeleted", eventMessage)
 }
 
+// reevaluate re-reads an object whose deletion hit a conflict and decides
+// again on its current version, updating item.Obj. retry is false when the
+// object is gone, was replaced, or no longer qualifies for deletion.
+func (j *Janitor) reevaluate(ctx context.Context, resourceInterface dynamic.ResourceInterface, item WorkItem) (deletionDecision, bool, error) {
+	current, err := resourceInterface.Get(ctx, item.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return deletionDecision{}, false, nil
+	}
+	if err != nil {
+		return deletionDecision{}, true, err
+	}
+	if current.GetUID() != item.Obj.GetUID() {
+		return deletionDecision{}, false, nil
+	}
+	decision := j.shouldDelete(current)
+	if !decision.shouldDelete {
+		logrus.WithFields(logrus.Fields{
+			"resource":  item.Resource.Resource,
+			"namespace": item.Namespace,
+			"name":      item.Name,
+		}).Info("Resource changed since listing and no longer qualifies for deletion")
+		return decision, false, nil
+	}
+	*item.Obj = *current
+	return decision, true, nil
+}
+
+// deleteOptionsForObject pins the deletion to the evaluated version: a
+// recreated object (UID) or a modified one (resourceVersion) is not deleted.
 func deleteOptionsForObject(obj *unstructured.Unstructured) metav1.DeleteOptions {
 	uid := obj.GetUID()
-	return metav1.DeleteOptions{
-		Preconditions: &metav1.Preconditions{
-			UID: &uid,
-		},
+	preconditions := &metav1.Preconditions{UID: &uid}
+	if rv := obj.GetResourceVersion(); rv != "" {
+		preconditions.ResourceVersion = &rv
 	}
+	return metav1.DeleteOptions{Preconditions: preconditions}
 }
 
 // evaluateDeleteIfMaxAge checks if resource should be deleted based on max age
@@ -453,6 +503,15 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 		"value":                value,
 		"annotationLastUsedAt": annotationLastUsedAt,
 	}).Debug("Starting evaluateDeleteIfIdle")
+
+	if obj.GetAnnotations()[annotationState] == stateRunning {
+		logrus.WithFields(logrus.Fields{
+			"resource":  obj.GetKind(),
+			"namespace": obj.GetNamespace(),
+			"name":      obj.GetName(),
+		}).Debug("Delete-if-idle policy ignored: instance is running")
+		return false, "", time.Time{}, nil
+	}
 
 	// Check if lastUsedAt annotation exists
 	lastUsedAtStr, exists := obj.GetAnnotations()[annotationLastUsedAt]

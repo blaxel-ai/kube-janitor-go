@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -895,6 +896,97 @@ func TestEvaluateDeleteIfDate(t *testing.T) {
 			if tt.wantDelete {
 				assert.Contains(t, gotReason, tt.wantReason)
 			}
+		})
+	}
+}
+
+func idlePod(state string) *unstructured.Unstructured {
+	annotations := map[string]interface{}{
+		annotationDeleteIfIdle: "1h",
+		annotationLastUsedAt:   time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+	}
+	if state != "" {
+		annotations[annotationState] = state
+	}
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"metadata": map[string]interface{}{
+				"name":              "idle-pod",
+				"namespace":         "default",
+				"uid":               "idle-pod-uid",
+				"resourceVersion":   "1",
+				"creationTimestamp": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+				"annotations":       annotations,
+			},
+		},
+	}
+}
+
+func TestShouldDeleteIdleSkipsRunning(t *testing.T) {
+	j := &Janitor{}
+
+	assert.True(t, j.shouldDelete(idlePod("")).shouldDelete, "idle pod without state is deleted")
+	assert.True(t, j.shouldDelete(idlePod("STANDBY")).shouldDelete, "idle pod on standby is deleted")
+	assert.False(t, j.shouldDelete(idlePod(stateRunning)).shouldDelete, "running pod is never idle")
+
+	maxAge := idlePod(stateRunning)
+	maxAge.SetAnnotations(map[string]string{
+		annotationDeleteIfMaxAge: "1h",
+		annotationState:          stateRunning,
+	})
+	decision := j.shouldDelete(maxAge)
+	assert.True(t, decision.shouldDelete, "max-age ignores the state")
+	assert.Equal(t, deletionReasonDeleteIfMaxAge, decision.reason)
+}
+
+func TestDeleteOptionsForObjectUsesResourceVersionPrecondition(t *testing.T) {
+	deleteOptions := deleteOptionsForObject(idlePod(""))
+
+	require.NotNil(t, deleteOptions.Preconditions.ResourceVersion)
+	assert.Equal(t, "1", *deleteOptions.Preconditions.ResourceVersion)
+}
+
+// A pod listed idle that started before the deletion is kept: the delete
+// conflicts on resourceVersion and the current version is RUNNING.
+func TestProcessItemConflictReevaluates(t *testing.T) {
+	tests := []struct {
+		name        string
+		current     *unstructured.Unstructured
+		wantDeletes int
+	}{
+		{name: "started since listing", current: idlePod(stateRunning), wantDeletes: 1},
+		{name: "still idle", current: idlePod("STANDBY"), wantDeletes: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.current.SetResourceVersion("2")
+			dynamicClient := fake.NewSimpleDynamicClient(runtime.NewScheme(), tt.current)
+
+			// The fake client drops DeleteOptions: the first delete conflicts as
+			// the listed version is stale, the retry succeeds.
+			deletes := 0
+			dynamicClient.PrependReactor("delete", "pods", func(_ ktesting.Action) (bool, runtime.Object, error) {
+				deletes++
+				if deletes == 1 {
+					return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "idle-pod", nil)
+				}
+				return true, nil, nil
+			})
+
+			j := &Janitor{
+				DynamicClient: dynamicClient,
+				EventRecorder: record.NewFakeRecorder(10),
+			}
+			j.processItem(context.Background(), WorkItem{
+				Resource:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+				Namespace: "default",
+				Name:      "idle-pod",
+				Obj:       idlePod("STANDBY"),
+			})
+
+			assert.Equal(t, tt.wantDeletes, deletes)
 		})
 	}
 }
