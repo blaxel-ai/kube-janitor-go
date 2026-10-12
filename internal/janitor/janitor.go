@@ -43,6 +43,10 @@ const (
 
 	// Timestamp annotations
 	annotationLastUsedAt = "lastUsedAt"
+	annotationState      = "state"
+
+	// stateRunning marks a resource as in use: idle policies never delete it
+	stateRunning = "RUNNING"
 )
 
 // Action constants
@@ -453,6 +457,15 @@ func (j *Janitor) evaluateDeleteIfIdle(value string, obj *unstructured.Unstructu
 		"value":                value,
 		"annotationLastUsedAt": annotationLastUsedAt,
 	}).Debug("Starting evaluateDeleteIfIdle")
+
+	if strings.EqualFold(obj.GetAnnotations()[annotationState], stateRunning) {
+		logrus.WithFields(logrus.Fields{
+			"resource":  obj.GetKind(),
+			"namespace": obj.GetNamespace(),
+			"name":      obj.GetName(),
+		}).Debug("Delete-if-idle policy skipped: resource state is RUNNING")
+		return false, "", time.Time{}, nil
+	}
 
 	// Check if lastUsedAt annotation exists
 	lastUsedAtStr, exists := obj.GetAnnotations()[annotationLastUsedAt]

@@ -127,6 +127,22 @@ func TestShouldDelete(t *testing.T) {
 			wantTTLDeadline:     true,
 		},
 		{
+			name: "Delete-if-idle expired but state RUNNING",
+			obj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name": "test-pod",
+						"annotations": map[string]interface{}{
+							annotationDeleteIfIdle: "30m",
+							annotationLastUsedAt:   now.Add(-1 * time.Hour).Format(time.RFC3339),
+							annotationState:        stateRunning,
+						},
+					},
+				},
+			},
+			wantDelete: false,
+		},
+		{
 			name: "TTL expired",
 			obj: &unstructured.Unstructured{
 				Object: map[string]interface{}{
