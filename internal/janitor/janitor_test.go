@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -952,41 +953,75 @@ func TestDeleteOptionsForObjectUsesResourceVersionPrecondition(t *testing.T) {
 // conflicts on resourceVersion and the current version is RUNNING.
 func TestProcessItemConflictReevaluates(t *testing.T) {
 	tests := []struct {
-		name        string
-		current     *unstructured.Unstructured
-		wantDeletes int
+		name         string
+		current      *unstructured.Unstructured
+		wantVersions []string
 	}{
-		{name: "started since listing", current: idlePod(stateRunning), wantDeletes: 1},
-		{name: "still idle", current: idlePod("STANDBY"), wantDeletes: 2},
+		{name: "started since listing", current: idlePod(stateRunning), wantVersions: []string{"1"}},
+		{name: "still idle", current: idlePod("STANDBY"), wantVersions: []string{"1", "2"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.current.SetResourceVersion("2")
 			dynamicClient := fake.NewSimpleDynamicClient(runtime.NewScheme(), tt.current)
 
-			// The fake client drops DeleteOptions: the first delete conflicts as
-			// the listed version is stale, the retry succeeds.
-			deletes := 0
-			dynamicClient.PrependReactor("delete", "pods", func(_ ktesting.Action) (bool, runtime.Object, error) {
-				deletes++
-				if deletes == 1 {
-					return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "idle-pod", nil)
-				}
-				return true, nil, nil
-			})
-
+			var deletedVersions []string
 			j := &Janitor{
-				DynamicClient: dynamicClient,
+				DynamicClient: preconditionClient{Interface: dynamicClient, versions: &deletedVersions},
 				EventRecorder: record.NewFakeRecorder(10),
 			}
+			listed := idlePod("STANDBY")
+			listed.SetResourceVersion("1")
 			j.processItem(context.Background(), WorkItem{
 				Resource:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
 				Namespace: "default",
 				Name:      "idle-pod",
-				Obj:       idlePod("STANDBY"),
+				Obj:       listed,
 			})
 
-			assert.Equal(t, tt.wantDeletes, deletes)
+			assert.Equal(t, tt.wantVersions, deletedVersions)
 		})
 	}
+}
+
+// preconditionClient enforces DeleteOptions preconditions like the API server,
+// since the fake dynamic client ignores them, and records each delete's
+// resourceVersion.
+type preconditionClient struct {
+	dynamic.Interface
+	versions *[]string
+}
+
+func (c preconditionClient) Resource(r schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return preconditionResource{NamespaceableResourceInterface: c.Interface.Resource(r), versions: c.versions}
+}
+
+type preconditionResource struct {
+	dynamic.NamespaceableResourceInterface
+	versions *[]string
+}
+
+func (r preconditionResource) Namespace(ns string) dynamic.ResourceInterface {
+	return preconditionNamespaced{ResourceInterface: r.NamespaceableResourceInterface.Namespace(ns), versions: r.versions}
+}
+
+type preconditionNamespaced struct {
+	dynamic.ResourceInterface
+	versions *[]string
+}
+
+func (r preconditionNamespaced) Delete(ctx context.Context, name string, opts metav1.DeleteOptions, subresources ...string) error {
+	rv := ""
+	if p := opts.Preconditions; p != nil && p.ResourceVersion != nil {
+		rv = *p.ResourceVersion
+	}
+	*r.versions = append(*r.versions, rv)
+	current, err := r.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if rv != current.GetResourceVersion() {
+		return apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, name, nil)
+	}
+	return r.ResourceInterface.Delete(ctx, name, opts, subresources...)
 }
