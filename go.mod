@@ -2,6 +2,8 @@ module github.com/blaxel-ai/kube-janitor-go
 
 go 1.25.0
 
+toolchain go1.27.3
+
 require (
 	github.com/google/cel-go v0.31.0
 	github.com/prometheus/client_golang v1.24.1

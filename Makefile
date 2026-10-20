@@ -75,7 +75,7 @@ run: build
 ## install-tools: Install development tools
 install-tools:
 	@echo "Installing development tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 	go install mvdan.cc/gofumpt@latest
 
 ## helm-lint: Lint Helm chart

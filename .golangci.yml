@@ -1,36 +1,44 @@
-# .golangci.yml - golangci-lint configuration
-run:
-  timeout: 5m
-
+# .golangci.yml - golangci-lint v2 configuration (migrated from v1 with `golangci-lint migrate`)
+version: "2"
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - typecheck
-    - unused
-    - gofmt
-    - goimports
-    - revive
-    - misspell
-    - unconvert
-    - prealloc
-    - nakedret
     - gosec
-    
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - unconvert
   disable:
+    - dupl
     - exhaustive
     - funlen
     - gocognit
     - gocyclo
     - lll
-    - dupl
-    - wrapcheck
-    - testpackage
     - paralleltest
-
+    - testpackage
+    - wrapcheck
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-issues-per-linter: 0
-  max-same-issues: 0 
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

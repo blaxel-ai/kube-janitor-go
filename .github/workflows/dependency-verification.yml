@@ -39,7 +39,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.25" # matches go.mod's `go 1.25.0` directive
+          go-version: "1.27.3" # matches go.mod's `toolchain go1.27.3` directive
 
       - name: Build
         run: go build -v ./cmd/...
@@ -55,23 +55,11 @@ jobs:
       - name: Test
         run: go test -count=1 ./...
 
-      # A prior pass reported this as "informational only, non-blocking"
-      # after seeing an already-installed local golangci-lint v2.10.1
-      # binary fail this repo's v1-style .golangci.yml (no `version:` key)
-      # with "can't load config: unsupported version of the configuration".
-      # Re-verified from a clean GOPATH/GOBIN (matching what a CI runner
-      # and `make install-tools` actually do): `go install
-      # .../golangci-lint@latest` on this import path (no /v2 suffix)
-      # resolves to v1.64.8 -- golangci-lint's v2 line lives under the
-      # go.mod-versioned github.com/golangci/golangci-lint/v2 module path,
-      # which Go's module resolution correctly excludes from `@latest` on
-      # the unsuffixed path. v1.64.8 loads this repo's config and exits 0
-      # with no findings. The earlier "pre-existing break" was therefore a
-      # stale local binary, not what this workflow (or `make lint` in
-      # build.yml) actually runs. Pinned to the exact version verified above
-      # so this step's own supply chain is reproducible, and made blocking
-      # since it genuinely passes.
+      # golangci-lint v1 (last: v1.64.8) cannot load Go 1.27 export data
+      # ("export data version 5 is greater than maximum supported version 2"),
+      # so the config is migrated to v2 and the v2 module path is pinned to
+      # the version verified against go1.27.3 (same pin as `make install-tools`).
       - name: Lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           golangci-lint run --timeout=5m ./...
